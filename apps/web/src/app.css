@@ -623,3 +623,97 @@ a {
   stroke: light-dark(#e2e8f0, #1e293b);
   stroke-width: 1;
 }
+
+/* Price vs performance (ticket 11): a pure-SVG scatter below the table.
+   The point colour reuses the series-0 custom property; every point is a
+   focusable group, so it needs a visible focus indicator in both themes
+   (an explicit :focus ring, plus the global :focus-visible outline). */
+.price-performance {
+  margin-top: 2.5rem;
+}
+
+.price-performance h3 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.9375rem;
+}
+
+.price-basis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.25rem;
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  max-width: 46rem;
+}
+
+.basis-option {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+}
+
+.basis-formula {
+  color: light-dark(#64748b, #94a3b8);
+  font-size: 0.75rem;
+}
+
+.scatter-svg {
+  display: block;
+  width: 100%;
+  max-width: 48rem;
+  height: auto;
+  margin-top: 0.5rem;
+  color: inherit;
+}
+
+.scatter-point circle {
+  fill: var(--chart-color);
+}
+
+.scatter-point {
+  cursor: default;
+}
+
+.scatter-point:focus,
+.scatter-point:focus-visible {
+  outline: 2px solid light-dark(#1d4ed8, #93c5fd);
+  outline-offset: 2px;
+}
+
+.scatter-point:focus circle {
+  stroke: light-dark(#0f172a, #f1f5f9);
+  stroke-width: 2px;
+}
+
+.scatter-grid line {
+  stroke: light-dark(#e2e8f0, #1e293b);
+  stroke-width: 1;
+}
+
+.axis-tick {
+  fill: currentColor;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.axis-title {
+  fill: currentColor;
+  font-size: 12px;
+}
+
+.chart-note {
+  margin: 0.5rem 0 0;
+  max-width: 46rem;
+  font-size: 0.875rem;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+.self-hosted-list ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+  max-width: 46rem;
+}
+
+.self-hosted-list li {
+  margin: 0.125rem 0;
+}
