@@ -6,7 +6,10 @@ import {
   bestValueByBenchmark,
   computeAverage,
   computeWeightedAverage,
+  decodeLeaderboardUrlState,
+  DEFAULT_LEADERBOARD_SORT,
   defaultSelectedBenchmarkIds,
+  encodeLeaderboardUrlState,
   filterModels,
   formatCoverage,
   isUnderHalfCoverage,
@@ -17,6 +20,7 @@ import {
   selectedBenchmarks,
   sortModelsByColumn,
   weightsAreActive,
+  type LeaderboardUrlState,
 } from "./index";
 
 /**
@@ -1189,5 +1193,211 @@ describe("scoresForPair", () => {
       expect(pair.primary?.evaluationSetting).toBe("semi-private, max reasoning effort");
       expect(pair.alternates.map((score) => score.value)).toEqual([94.6]);
     });
+  });
+});
+
+describe("leaderboard URL state (encode/decode)", () => {
+  // A miniature catalogue: bench-1 and bench-2 are core-Tier (the default
+  // selection), bench-3 is extended.
+  const catalogue: Benchmark[] = [
+    makeBenchmark({ id: "bench-1", name: "Bench 1" }),
+    makeBenchmark({ id: "bench-2", name: "Bench 2" }),
+    makeBenchmark({ id: "bench-3", name: "Bench 3", tier: "extended" }),
+  ];
+
+  it("encodes a full view into the documented compact, human-readable format", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "gpt 5",
+      licenses: ["proprietary"],
+      providers: ["OpenAI"],
+      minContextWindow: 500000,
+      maxInputPricePer1M: undefined,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: ["model-a", "model-b"],
+    });
+
+    // Fixed parameter order; default sort omitted; default weights omitted;
+    // commas and colons stay readable.
+    expect(query).toBe(
+      "benchmarks=bench-1,bench-2&weights=bench-1:2&q=gpt+5&license=proprietary" +
+        "&provider=OpenAI&min-context=500000&compare=model-a,model-b",
+    );
+  });
+
+  it("encodes the price ceilings and a non-default sort", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: ["bench-3"],
+      weights: {},
+      sort: { column: "bench-3", direction: "asc" },
+      search: "",
+      licenses: [],
+      providers: [],
+      minContextWindow: undefined,
+      maxInputPricePer1M: 4.5,
+      maxOutputPricePer1M: 10,
+      comparedModelIds: [],
+    });
+
+    expect(query).toBe(
+      "benchmarks=bench-3&sort=bench-3:asc&max-input-price=4.5&max-output-price=10",
+    );
+  });
+
+  it("always encodes the selection explicitly — an empty selection is benchmarks=", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: [],
+      weights: {},
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      comparedModelIds: [],
+    });
+
+    expect(query).toBe("benchmarks=");
+  });
+
+  it("decodes the documented format back into the same state", () => {
+    const state = decodeLeaderboardUrlState(
+      "benchmarks=bench-2,bench-1&weights=bench-2:0.5&q=gpt+5&license=proprietary,open-weights" +
+        "&provider=Mistral+AI,OpenAI&min-context=500000&max-input-price=4.5&compare=model-a,model-b",
+      catalogue,
+    );
+
+    expect(state).toEqual({
+      benchmarkIds: ["bench-2", "bench-1"],
+      weights: { "bench-2": 0.5 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "gpt 5",
+      licenses: ["proprietary", "open-weights"],
+      providers: ["Mistral AI", "OpenAI"],
+      minContextWindow: 500000,
+      maxInputPricePer1M: 4.5,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: ["model-a", "model-b"],
+    });
+  });
+
+  it("decodes a sort on a Benchmark column and accepts a leading '?'", () => {
+    const state = decodeLeaderboardUrlState("?sort=bench-3:asc", catalogue);
+
+    expect(state.sort).toEqual({ column: "bench-3", direction: "asc" });
+    // No benchmarks parameter: the Tier-driven default selection.
+    expect(state.benchmarkIds).toEqual(["bench-1", "bench-2"]);
+  });
+
+  it("treats benchmarks= as an explicit empty selection, distinct from an absent parameter", () => {
+    // Absent → the core-Tier default; present but all-unknown → dropped to
+    // an explicit empty selection (the visitor chose Benchmarks that no
+    // longer exist — the view is honest about that, it does not silently
+    // re-select the defaults).
+    expect(decodeLeaderboardUrlState("", catalogue).benchmarkIds).toEqual(["bench-1", "bench-2"]);
+    expect(decodeLeaderboardUrlState("benchmarks=", catalogue).benchmarkIds).toEqual([]);
+    expect(decodeLeaderboardUrlState("benchmarks=ghost", catalogue).benchmarkIds).toEqual([]);
+  });
+
+  it("round-trips representative views exactly: decode(encode(state)) == state", () => {
+    const states: LeaderboardUrlState[] = [
+      // The default view: core selection, no weights, default sort.
+      {
+        benchmarkIds: ["bench-1", "bench-2"],
+        weights: {},
+        sort: DEFAULT_LEADERBOARD_SORT,
+        search: "",
+        licenses: [],
+        providers: [],
+        comparedModelIds: [],
+      },
+      // Everything at once: weights (including 0 and a remembered weight on
+      // an unselected Benchmark), a Benchmark-column sort, search text with
+      // URL-significant characters, both price ceilings, compared Models.
+      {
+        benchmarkIds: ["bench-1", "bench-3"],
+        weights: { "bench-1": 0, "bench-2": 3, "bench-3": 0.5 },
+        sort: { column: "bench-1", direction: "asc" },
+        search: "gpt & 5 =? #2",
+        licenses: ["open-weights", "open-source"],
+        providers: ["Mistral AI", "Z.ai"],
+        minContextWindow: 0,
+        maxInputPricePer1M: 4.5,
+        maxOutputPricePer1M: 10,
+        comparedModelIds: ["model-a", "model-b", "model-c"],
+      },
+      // An empty selection round-trips as benchmarks= — the shared URL keeps
+      // meaning "no Benchmark selected".
+      {
+        benchmarkIds: [],
+        weights: { "bench-1": 2 },
+        sort: { column: "provider", direction: "desc" },
+        search: "  ",
+        licenses: [],
+        providers: [],
+        comparedModelIds: [],
+      },
+    ];
+
+    for (const state of states) {
+      expect(decodeLeaderboardUrlState(encodeLeaderboardUrlState(state), catalogue)).toEqual(state);
+    }
+  });
+
+  it("ignores unknown parameters and malformed values — no throw, defaults win", () => {
+    const state = decodeLeaderboardUrlState(
+      "?foo=bar&benchmarks=ghost,bench-1,bench-1&weights=ghost:2,bench-2:abc,bench-1:-3,bench-2:0.5,bench-3:1" +
+        "&sort=nonsense:desc&sort=average:sideways&q=&license=proprietary,banana&min-context=-5" +
+        "&max-input-price=nan&compare=,,&%zz=broke",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]); // unknown dropped, duplicate collapsed
+    expect(state.weights).toEqual({ "bench-2": 0.5 }); // unknown id, garbage number, negative, and default 1 all dropped
+    expect(state.sort).toEqual(DEFAULT_LEADERBOARD_SORT); // unknown column and bad direction
+    expect(state.search).toBe("");
+    expect(state.licenses).toEqual(["proprietary"]); // value outside the three-value License enum
+    expect(state.minContextWindow).toBeUndefined(); // negative
+    expect(state.maxInputPricePer1M).toBeUndefined(); // not a number
+    expect(state.comparedModelIds).toEqual([]); // empty entries dropped
+  });
+
+  it("keeps the first occurrence when a parameter repeats", () => {
+    const state = decodeLeaderboardUrlState(
+      "?benchmarks=bench-1&benchmarks=bench-3&q=first&q=second",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]);
+    expect(state.search).toBe("first");
+  });
+
+  it("drops decoded benchmark ids that no longer exist in the catalogue", () => {
+    // A shared URL from before a Benchmark was retired: the selection keeps
+    // the Benchmarks that still exist; a weight on a retired Benchmark is
+    // dropped with it; sorting by a retired Benchmark falls back to the
+    // default sort.
+    const state = decodeLeaderboardUrlState(
+      "benchmarks=bench-1,retired-bench&weights=retired-bench:2,bench-1:3&sort=retired-bench:desc",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]);
+    expect(state.weights).toEqual({ "bench-1": 3 });
+    expect(state.sort).toEqual(DEFAULT_LEADERBOARD_SORT);
+  });
+
+  it("keeps Provider and compared-Model ids verbatim — stale names filter to no Models rather than being silently dropped", () => {
+    // Providers and Models cannot be validated against the Benchmark
+    // catalogue; a stale name in a shared URL restores the view exactly,
+    // and "No Models match the current search and filters" is the honest
+    // rendering of a filter for something that no longer exists.
+    const state = decodeLeaderboardUrlState(
+      "provider=Former+Labs&compare=retired-model,still-here",
+      catalogue,
+    );
+
+    expect(state.providers).toEqual(["Former Labs"]);
+    expect(state.comparedModelIds).toEqual(["retired-model", "still-here"]);
   });
 });

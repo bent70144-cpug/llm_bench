@@ -1,4 +1,10 @@
-import type { Benchmark, License, Model, Score } from "@llm-bench/schema";
+import {
+  LICENSE_VALUES,
+  type Benchmark,
+  type License,
+  type Model,
+  type Score,
+} from "@llm-bench/schema";
 
 /**
  * @llm-bench/scoring — pure functions, no React.
@@ -7,10 +13,9 @@ import type { Benchmark, License, Model, Score } from "@llm-bench/schema";
  * and are never stored in the data package. Only the Primary score per
  * Model and Benchmark feeds the Average, Coverage, and highlighting.
  *
- * The public API is designed to grow without breaking changes: later
- * tickets add Weighted Average, ranking, filtering, and URL-state
- * encode/decode as new functions or as optional fields on the existing
- * options objects.
+ * The public API grows without breaking changes: Weighted Average,
+ * ranking, filtering, and URL-state encode/decode are additive functions
+ * and optional fields on the existing options objects.
  */
 
 /** Options for computing an Average over a Benchmark selection. */
@@ -525,4 +530,188 @@ export function filterModels(models: readonly Model[], query: ModelQuery): Model
     }
     return true;
   });
+}
+
+// --- Shareable URL state -----------------------------------------------------
+
+/**
+ * The leaderboard's default sort: the active aggregate (Average, or Weighted
+ * Average when weights are active) descending — the ranking. Exported so the
+ * web app and the URL-state codec agree on one default.
+ */
+export const DEFAULT_LEADERBOARD_SORT: LeaderboardSort = {
+  column: "average",
+  direction: "desc",
+};
+
+/** Everything the leaderboard view carries, shareable as URL query parameters. */
+export interface LeaderboardUrlState {
+  /** The selected Benchmark ids, in the order they appear in the URL. */
+  benchmarkIds: readonly string[];
+  /** Per-Benchmark weights; default (1) weights are simply absent. */
+  weights: BenchmarkWeights;
+  /** The active column sort. */
+  sort: LeaderboardSort;
+  /** Free-text search over Model name and Provider. */
+  search: string;
+  /** Active License filters, from the strict three-value License enum. */
+  licenses: readonly License[];
+  /** Active Provider filters, kept verbatim (they come from the Model data). */
+  providers: readonly string[];
+  /** Minimum Context window in tokens. */
+  minContextWindow?: number;
+  /** Maximum input price per 1M tokens. */
+  maxInputPricePer1M?: number;
+  /** Maximum output price per 1M tokens. */
+  maxOutputPricePer1M?: number;
+  /**
+   * Compared Model ids — the `compare` parameter is reserved for the compare
+   * view; encode/decode carries it verbatim so that view never changes the
+   * URL format.
+   */
+  comparedModelIds: readonly string[];
+}
+
+/** Splits a comma-separated parameter value into trimmed, non-empty entries. */
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
+/**
+ * Encodes the leaderboard view into a compact, stable, human-readable query
+ * string (without the leading "?"). Parameters appear in a fixed order —
+ * benchmarks, weights, sort, q, license, provider, min-context,
+ * max-input-price, max-output-price, compare — and defaults are omitted:
+ * default (1) weights, the default sort, empty search/filters, undefined
+ * numbers, and no compared Models produce nothing. The Benchmark selection
+ * is always written explicitly (an empty selection is `benchmarks=`), so a
+ * shared URL always reproduces the selection exactly.
+ */
+export function encodeLeaderboardUrlState(state: LeaderboardUrlState): string {
+  const params = new URLSearchParams();
+  params.set("benchmarks", state.benchmarkIds.join(","));
+
+  // Weights: only non-default entries, sorted by Benchmark id so the encoded
+  // URL is deterministic regardless of the order weights were set in.
+  const nonDefaultWeights = Object.entries(state.weights)
+    .filter(([, weight]) => Number.isFinite(weight) && weight >= 0 && weight !== 1)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([benchmarkId, weight]) => `${benchmarkId}:${weight}`);
+  if (nonDefaultWeights.length > 0) {
+    params.set("weights", nonDefaultWeights.join(","));
+  }
+
+  if (
+    state.sort.column !== DEFAULT_LEADERBOARD_SORT.column ||
+    state.sort.direction !== DEFAULT_LEADERBOARD_SORT.direction
+  ) {
+    params.set("sort", `${state.sort.column}:${state.sort.direction}`);
+  }
+  if (state.search !== "") {
+    params.set("q", state.search);
+  }
+  if (state.licenses.length > 0) {
+    params.set("license", state.licenses.join(","));
+  }
+  if (state.providers.length > 0) {
+    params.set("provider", state.providers.join(","));
+  }
+  if (state.minContextWindow !== undefined) {
+    params.set("min-context", String(state.minContextWindow));
+  }
+  if (state.maxInputPricePer1M !== undefined) {
+    params.set("max-input-price", String(state.maxInputPricePer1M));
+  }
+  if (state.maxOutputPricePer1M !== undefined) {
+    params.set("max-output-price", String(state.maxOutputPricePer1M));
+  }
+  if (state.comparedModelIds.length > 0) {
+    params.set("compare", state.comparedModelIds.join(","));
+  }
+
+  // form-urlencoded escaping turns "," and ":" into %2C/%3A; both parse back
+  // identically as literals, so unescape them to keep the URL readable.
+  return params.toString().replaceAll("%2C", ",").replaceAll("%3A", ":");
+}
+
+/** A sort parameter's column is valid if it is a Model field column or a Benchmark id. */
+function decodeSort(value: string | null, catalogueIds: ReadonlySet<string>): LeaderboardSort {
+  if (value === null) return DEFAULT_LEADERBOARD_SORT;
+  const separator = value.lastIndexOf(":");
+  if (separator <= 0) return DEFAULT_LEADERBOARD_SORT;
+  const column = value.slice(0, separator);
+  const direction = value.slice(separator + 1);
+  if (direction !== "asc" && direction !== "desc") return DEFAULT_LEADERBOARD_SORT;
+  if (!MODEL_COLUMN_IDS.has(column) && !catalogueIds.has(column)) {
+    return DEFAULT_LEADERBOARD_SORT;
+  }
+  return { column, direction };
+}
+
+/** A numeric filter parameter: finite and ≥ 0, otherwise absent. */
+function decodeNonNegativeNumber(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/**
+ * Decodes a query string (with or without the leading "?") back into the
+ * leaderboard view state, using the Benchmark catalogue to validate ids.
+ *
+ * Unknown parameters and malformed values never throw — defaults win. When
+ * a parameter repeats, the first occurrence wins. Benchmark ids that no
+ * longer exist in the catalogue are dropped from the selection, the
+ * weights, and the sort column. An absent `benchmarks` parameter means the
+ * Tier-driven default selection; a present one (even empty, or emptied by
+ * dropping retired ids) is the explicit selection. Provider and compared
+ * Model ids are kept verbatim: a stale name filters to no Models rather
+ * than being silently dropped — the honest rendering of a shared view.
+ */
+export function decodeLeaderboardUrlState(
+  query: string,
+  benchmarks: readonly Benchmark[],
+): LeaderboardUrlState {
+  const params = new URLSearchParams(query);
+  const catalogueIds = new Set(benchmarks.map((benchmark) => benchmark.id));
+
+  const benchmarksParam = params.get("benchmarks");
+  const benchmarkIds =
+    benchmarksParam === null
+      ? defaultSelectedBenchmarkIds(benchmarks)
+      : [...new Set(splitList(benchmarksParam))].filter((id) => catalogueIds.has(id));
+
+  // Weights: only catalogue Benchmarks with a finite weight ≥ 0 other than
+  // the default 1 are kept — the canonical state stores nothing for
+  // default weights, so re-encoding produces the same URL.
+  const weights: Record<string, number> = {};
+  for (const entry of splitList(params.get("weights") ?? "")) {
+    const separator = entry.lastIndexOf(":");
+    if (separator <= 0) continue;
+    const benchmarkId = entry.slice(0, separator);
+    const weight = Number(entry.slice(separator + 1));
+    if (!catalogueIds.has(benchmarkId)) continue;
+    if (!Number.isFinite(weight) || weight < 0 || weight === 1) continue;
+    weights[benchmarkId] = weight;
+  }
+
+  const licenses = splitList(params.get("license") ?? "").filter((value): value is License =>
+    (LICENSE_VALUES as readonly string[]).includes(value),
+  );
+
+  return {
+    benchmarkIds,
+    weights,
+    sort: decodeSort(params.get("sort"), catalogueIds),
+    search: params.get("q") ?? "",
+    licenses,
+    providers: splitList(params.get("provider") ?? ""),
+    minContextWindow: decodeNonNegativeNumber(params.get("min-context")),
+    maxInputPricePer1M: decodeNonNegativeNumber(params.get("max-input-price")),
+    maxOutputPricePer1M: decodeNonNegativeNumber(params.get("max-output-price")),
+    comparedModelIds: splitList(params.get("compare") ?? ""),
+  };
 }
