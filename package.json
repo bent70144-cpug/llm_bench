@@ -15,6 +15,6 @@
     "data:import": "pnpm --filter tools run import",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
-    "test:browser": "pnpm --filter tools run browser-check"
+    "test:browser": "pnpm --filter tools run browser-check && pnpm --filter tools run perf-check"
   }
 }
