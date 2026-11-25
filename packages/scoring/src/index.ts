@@ -3,6 +3,7 @@ import {
   type Benchmark,
   type License,
   type Model,
+  type PricingConfig,
   type Score,
 } from "@llm-bench/schema";
 
@@ -243,6 +244,29 @@ export function modelDataCurrency(model: Model, scores: readonly Score[]): strin
 }
 
 /**
+ * The Blended price of one Model per 1M tokens:
+ * (inputWeight × inputPricePer1M + outputWeight × outputPricePer1M) /
+ * (inputWeight + outputWeight), with the ratio taken from the pricing
+ * config data (packages/data/pricing-config.json, a 3:1 input-to-output
+ * ratio) — the methodology is data, never code, and the divisor is the
+ * weight sum, never stored. Null when either price is null (the price
+ * invariant guarantees both-or-neither): a Model without a public API
+ * rate has no Blended price, never zero.
+ */
+export function blendedPricePer1M(
+  model: Model,
+  pricingConfig: PricingConfig,
+): number | null {
+  if (model.inputPricePer1M === null || model.outputPricePer1M === null) return null;
+  const weightSum = pricingConfig.inputWeight + pricingConfig.outputWeight;
+  return (
+    (pricingConfig.inputWeight * model.inputPricePer1M +
+      pricingConfig.outputWeight * model.outputPricePer1M) /
+    weightSum
+  );
+}
+
+/**
  * Maps each Benchmark id to the best Primary score value across all Models,
  * for highlighting the best Score per Benchmark. Non-primary Scores are
  * ignored; Benchmarks without a Primary score have no entry.
@@ -469,6 +493,21 @@ export function sortModelsByColumn(
     if (comparison !== 0 || aggregateResults === null) return comparison;
     return compareForRanking(left, right, aggregateResults);
   });
+}
+
+/**
+ * The active aggregate of one Model over the selection — the Weighted
+ * Average when `context.weights` are active on the selection (any selected
+ * Benchmark weighted ≠ 1), the plain Average otherwise. This is the number
+ * the leaderboard's Average column, the ranking, and the price/performance
+ * chart all display, so every view agrees on which aggregate is active.
+ * Only Primary scores feed it.
+ */
+export function activeAggregateResult(
+  modelId: string,
+  context: LeaderboardContext,
+): AverageResult {
+  return aggregateResultFor(modelId, context);
 }
 
 /** The active aggregate of one Model: Weighted Average when the context's weights are active. */
