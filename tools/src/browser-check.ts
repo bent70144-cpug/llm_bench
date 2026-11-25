@@ -1063,6 +1063,88 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     await page.locator("h1").first().waitFor({ state: "visible" });
   });
 
+  await step("the wide table scrolls inside its own container on mobile (ticket 13)", async () => {
+    // 375px: a common phone width. The table has 20 columns, so its content
+    // is far wider than the screen — the container must scroll, the page
+    // must not.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    const layout = await page.evaluate<{
+      pageOverflows: boolean;
+      pageScrollWidth: number;
+      pageClientWidth: number;
+      containerScrolls: boolean;
+      containerScrollWidth: number;
+      containerClientWidth: number;
+    }>(`(() => {
+      const doc = document.documentElement;
+      const scroller = document.querySelector(".table-scroll");
+      return {
+        pageOverflows: doc.scrollWidth > doc.clientWidth,
+        pageScrollWidth: doc.scrollWidth,
+        pageClientWidth: doc.clientWidth,
+        containerScrolls: scroller !== null && scroller.scrollWidth > scroller.clientWidth,
+        containerScrollWidth: scroller === null ? 0 : scroller.scrollWidth,
+        containerClientWidth: scroller === null ? 0 : scroller.clientWidth,
+      };
+    })()`);
+    check(
+      "at 375px the table wrapper scrolls horizontally (wide content, own container)",
+      layout.containerScrolls,
+      `container ${layout.containerScrollWidth}px > ${layout.containerClientWidth}px?`,
+    );
+    check(
+      "at 375px the page itself does not overflow (layout intact)",
+      !layout.pageOverflows,
+      `document ${layout.pageScrollWidth}px > ${layout.pageClientWidth}px?`,
+    );
+
+    const scrolled = await page.evaluate<number>(
+      "(() => { const s = document.querySelector('.table-scroll'); s.scrollLeft = 400; return s.scrollLeft; })()",
+    );
+    check("the table wrapper actually scrolls sideways", scrolled > 0, `scrollLeft ${scrolled}`);
+    const stillIntact = await page.evaluate<boolean>(
+      "document.documentElement.scrollWidth <= document.documentElement.clientWidth",
+    );
+    check("the page still does not overflow after scrolling the table", stillIntact);
+
+    // Benchmark pages stay usable at phone width.
+    const scored = catalogue.find((entry) => primaryScoresFor(entry.id).length > 0);
+    if (scored !== undefined) {
+      await page.goto(`${base}/benchmarks/${scored.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      const benchmarkOverflows = await page.evaluate<boolean>(
+        "document.documentElement.scrollWidth > document.documentElement.clientWidth",
+      );
+      check("a Benchmark page does not overflow at 375px", !benchmarkOverflows);
+      check(
+        "the Benchmark facts render at 375px",
+        (await page.locator(".benchmark-facts").count()) === 1,
+      );
+    }
+
+    // The Score details panel stays usable at phone width: it fits inside
+    // the viewport (the backdrop scrolls vertically for tall content).
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    await page.locator("tbody button.score-details-button").first().click();
+    const dialog = page.locator("[role=dialog]");
+    await dialog.waitFor({ state: "visible" });
+    const dialogFits = await page.evaluate<{ fits: boolean; detail: string }>(
+      "(() => { const el = document.querySelector('[role=dialog]'); if (el === null) return { fits: false, detail: 'missing' };" +
+        " const r = el.getBoundingClientRect(); return { fits: r.left >= 0 && r.right <= window.innerWidth && r.width > 200," +
+        ` detail: 'left ' + Math.round(r.left) + ', right ' + Math.round(r.right) + ' of ' + window.innerWidth }; })()`,
+    );
+    check("the Score details panel fits the 375px viewport", dialogFits.fits, dialogFits.detail);
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+
+    // Back to the desktop viewport the remaining checks assume.
+    await page.setViewportSize({ width: 1280, height: 720 });
+  });
+
   await step("keyboard users reach and operate the main leaderboard controls (ticket 13)", async () => {
     await page.goto(`${base}/`, { waitUntil: "load" });
     await page.locator("h1").first().waitFor({ state: "visible" });
