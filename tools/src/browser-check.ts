@@ -4,10 +4,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { LICENSE_VALUES, type Benchmark, type Model, type Score } from "@llm-bench/schema";
 import {
+  bestValueByBenchmark,
   computeAverage,
   defaultSelectedBenchmarkIds,
   filterModels,
   isUnderHalfCoverage,
+  modelDataCurrency,
+  primaryScoreFor,
   rankModelsByAverage,
   sortModelsByColumn,
 } from "@llm-bench/scoring";
@@ -24,6 +27,13 @@ import { startSpaStaticServer } from "./lib/spa-static-server";
  * unknown ids and unbuilt routes get their not-found views, and the pages
  * are keyboard-operable. Ticket 07 adds the Score provenance checks: the
  * tooltip and the Score details panel over the leaderboard.
+ *
+ * Ticket 09 covers the Model detail pages: direct navigation and refresh
+ * on /models/<id> for every Model, the data-currency header, facts with
+ * null prices and Reference inference providers, the Model-versus-leaders
+ * chart (n/a for gaps, never zero), the per-Benchmark Score sections with
+ * alternate Evaluation settings, keyboard operability, and the
+ * leaderboard's Model-name links.
  *
  * Ticket 05 covers the leaderboard's ranking and Coverage semantics: the
  * default ranked view, the (n/selected) Coverage beside every Average, the
@@ -233,7 +243,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
   });
 
   await step("unbuilt routes fall through to the generic not-found page", async () => {
-    for (const route of ["/models/some-model", "/compare"]) {
+    for (const route of ["/compare"]) {
       await page.goto(`${base}${route}`, { waitUntil: "load" });
       await page.locator("h1").first().waitFor({ state: "visible" });
       check(`h1 is Page not found on ${route}`, (await page.locator("h1").textContent()) === "Page not found");
@@ -474,7 +484,10 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
 
   /**
    * The text (and class) of one Benchmark cell of one Model's row:
-   * `benchmarkId` must be among the selected Benchmarks.
+   * `benchmarkId` must be among the selected Benchmarks. The text read is
+   * the value the leaderboard displays — the score-link anchor's text
+   * (the ⓘ details control ticket 07 added to the same cell is not part
+   * of the value).
    */
   const benchmarkCell = async (
     modelName: string,
@@ -490,8 +503,11 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       const name = (await row.locator("th").first().textContent()) ?? "";
       if (name === modelName) {
         const cell = row.locator("td").nth(cellIndex);
+        const anchor = cell.locator("a.score-link").first();
+        const text =
+          (await anchor.textContent()) ?? (await cell.textContent()) ?? "";
         return {
-          text: (await cell.textContent()) ?? "",
+          text,
           className: (await cell.getAttribute("class")) ?? "",
         };
       }
@@ -749,6 +765,342 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
         `${bestModel.name}: "${bestCell.text}" class="${bestCell.className}"`,
       );
     }
+  });
+
+  // --- Ticket 09: Model detail pages -----------------------------------
+
+  // A real null-priced Model with both scored and unscored Benchmarks, so
+  // one page exercises prices, the chart, and the Score sections.
+  const maverick = models.find((model) => model.id === "llama-4-maverick");
+  if (
+    maverick === undefined ||
+    maverick.inputPricePer1M !== null ||
+    scores.filter((score) => score.isPrimary && score.modelId === maverick.id).length === 0
+  ) {
+    check("data has the null-priced llama-4-maverick with at least one Primary score", false);
+  } else {
+    await step("direct navigation renders a Model page from data", async () => {
+      await page.goto(`${base}/models/${maverick.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      check("h1 is the Model name", (await page.locator("h1").textContent()) === maverick.name);
+      check(
+        "document title names the Model",
+        (await page.title()) === `${maverick.name} — LLM Bench`,
+        await page.title(),
+      );
+
+      const body = await bodyText();
+      // The header date is the data currency: the latest of the Model's
+      // lastUpdated and its Scores' retrievedDate values.
+      check(
+        "the header shows the data currency date",
+        body.includes(`Data current as of ${modelDataCurrency(maverick, scores)}`),
+        `expected ${modelDataCurrency(maverick, scores)}`,
+      );
+
+      // The facts, with the glossary vocabulary as labels.
+      check("Provider renders", body.includes(maverick.provider));
+      check("License and License name render", body.includes(maverick.license) && (maverick.licenseName === undefined || body.includes(maverick.licenseName)));
+      check(
+        "Context window renders with thousands separators",
+        body.includes(maverick.contextWindow.toLocaleString("en-US")),
+      );
+      check("Release date renders", body.includes(maverick.releaseDate));
+      check(
+        "null prices read exactly \"self-hosted / no public API rate\" — never zero",
+        body.includes("self-hosted / no public API rate") &&
+          !body.includes("$0.00") &&
+          (await page.locator(".model-facts .missing").count()) === 2,
+      );
+      check(
+        "the Model source link points at its source and shows its host",
+        (await page.locator(".model-facts a").getAttribute("href")) === maverick.sourceUrl &&
+          body.includes(new URL(maverick.sourceUrl).hostname),
+      );
+      check(
+        "notes render",
+        maverick.notes !== undefined && body.includes(maverick.notes.slice(0, 80)),
+      );
+      check(
+        "back-to-leaderboard link is first and points at /",
+        (await page.locator(".back-link a").getAttribute("href")) === "/" &&
+          (await page.locator(".back-link a").textContent()) === "Back to leaderboard",
+      );
+    });
+
+    await step("refresh on a Model route keeps working", async () => {
+      await page.goto(`${base}/models/${maverick.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      await page.reload({ waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check("h1 still renders after refresh", (await page.locator("h1").textContent()) === maverick.name);
+      check(
+        "facts still render after refresh",
+        (await bodyText()).includes(maverick.provider),
+      );
+    });
+
+    await step("the chart compares the Model against the Benchmark leaders with n/a for gaps", async () => {
+      await page.goto(`${base}/models/${maverick.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      // One chart row per Benchmark, in catalogue order (like the
+      // leaderboard's columns), each carrying the Model's Primary score
+      // and the best Primary score across all Models — computed here from
+      // the data package via the scoring package.
+      const bestByBenchmark = bestValueByBenchmark(scores);
+      const expectedLabels = catalogue.map((benchmark) => {
+        const primary = primaryScoreFor(maverick.id, benchmark.id, scores);
+        const bestValue = bestByBenchmark.get(benchmark.id);
+        return (
+          `${benchmark.name}: ${maverick.name} ${primary === undefined ? "n/a" : primary.value}; ` +
+          `Best across Models ${bestValue === undefined ? "n/a" : bestValue}`
+        );
+      });
+
+      const rows = page.locator("svg g[role=img]");
+      const rowCount = await rows.count();
+      check("one chart row per Benchmark, in catalogue order", rowCount === catalogue.length, `${rowCount} rows`);
+
+      let allRowsMatch = true;
+      for (let index = 0; index < Math.min(rowCount, expectedLabels.length); index++) {
+        const label = await rows.nth(index).getAttribute("aria-label");
+        if (label !== expectedLabels[index]) {
+          allRowsMatch = false;
+          check(
+            `chart row ${index} reads the Benchmark, the Model, and the leader`,
+            false,
+            `${label ?? "null"} vs ${expectedLabels[index]}`,
+          );
+        }
+      }
+      check("every chart row reads the Benchmark, the Model, and the leader", allRowsMatch);
+
+      const scored = catalogue.filter((benchmark) =>
+        scores.some((score) => score.isPrimary && score.modelId === maverick.id && score.benchmarkId === benchmark.id),
+      );
+      const unscored = catalogue.filter((benchmark) => !scored.includes(benchmark));
+      const chartText = (await page.locator("svg").textContent()) ?? "";
+      check(
+        "a missing Primary renders n/a on the chart — never a zero bar",
+        unscored.length > 0 &&
+          unscored.every(
+            (benchmark) =>
+              chartText.includes(benchmark.name) &&
+              expectedLabels[catalogue.indexOf(benchmark)]!.includes(" n/a;"),
+          ) &&
+          (await page.locator("svg .chart-value.missing").count()) >= unscored.length,
+        `${unscored.length} unscored Benchmarks`,
+      );
+
+      // The legend names both series: the Model and the best across Models.
+      const legendText = (await page.locator(".chart-legend").textContent()) ?? "";
+      check(
+        "the legend names the Model and the best-across-Models series",
+        legendText.includes(maverick.name) && legendText.includes("Best across Models"),
+        legendText,
+      );
+    });
+
+    await step("every Benchmark gets a Score section, n/a when unscored", async () => {
+      await page.goto(`${base}/models/${maverick.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      const sections = page.locator('section:has(> h2 a[href^="/benchmarks/"])');
+      const sectionCount = await sections.count();
+      check("one Score section per Benchmark", sectionCount === catalogue.length, `${sectionCount} sections`);
+
+      // Each section's heading links to the Benchmark's page, in catalogue order.
+      let orderMatches = true;
+      for (let index = 0; index < Math.min(sectionCount, catalogue.length); index++) {
+        const href = await sections.nth(index).locator("h2 a").getAttribute("href");
+        if (href !== `/benchmarks/${catalogue[index]!.id}`) {
+          orderMatches = false;
+          check(`section ${index} links to its Benchmark`, false, href ?? "null");
+        }
+      }
+      check("sections render in catalogue order, each linking to its Benchmark", orderMatches);
+
+      // A scored pair shows the Primary score and its provenance; an
+      // unscored pair shows the n/a sentence — never a zero.
+      const scoredBenchmark = catalogue.find((benchmark) =>
+        scores.some((score) => score.isPrimary && score.modelId === maverick.id && score.benchmarkId === benchmark.id),
+      );
+      const unscoredBenchmark = catalogue.find((benchmark) =>
+        !scores.some((score) => score.modelId === maverick.id && score.benchmarkId === benchmark.id),
+      );
+      if (scoredBenchmark !== undefined) {
+        const primary = primaryScoreFor(maverick.id, scoredBenchmark.id, scores)!;
+        const sectionText =
+          (await page.locator(`section:has(h2 a[href="/benchmarks/${scoredBenchmark.id}"])`).textContent()) ?? "";
+        check(
+          "a scored pair shows the Primary score with full provenance",
+          sectionText.includes("Primary score") &&
+            sectionText.includes(String(primary.value)) &&
+            sectionText.includes(primary.evaluationSetting) &&
+            sectionText.includes(primary.sourceType) &&
+            sectionText.includes(primary.publishedDate) &&
+            sectionText.includes(primary.retrievedDate),
+          sectionText.slice(0, 90),
+        );
+      }
+      if (unscoredBenchmark !== undefined) {
+        const sectionText =
+          (await page.locator(`section:has(h2 a[href="/benchmarks/${unscoredBenchmark.id}"])`).textContent()) ?? "";
+        check(
+          "an unscored pair shows the n/a sentence",
+          sectionText.includes("n/a") && sectionText.includes("no Scores have been published for"),
+          sectionText.slice(0, 90),
+        );
+      }
+    });
+
+    await step("keyboard navigation reaches the Model page content", async () => {
+      await page.goto(`${base}/models/${maverick.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      await page.keyboard.press("Tab");
+      const firstTabStop = await page.locator(":focus").first().textContent();
+      check(
+        "first tab stop is the back-to-leaderboard link",
+        firstTabStop === "Back to leaderboard",
+        firstTabStop ?? "nothing focused",
+      );
+
+      // The Benchmark-name links inside the Score sections are operable
+      // from the keyboard too (every control on the page is a real link).
+      await page.locator("section h2 a").first().focus();
+      await page.keyboard.press("Enter");
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check(
+        "Enter on a Benchmark-name link opens the Benchmark page",
+        pathname() === `/benchmarks/${catalogue[0]!.id}`,
+        page.url(),
+      );
+    });
+  }
+
+  await step("a third-party rate names its Reference inference provider", async () => {
+    // Real Models whose rate comes from a third party (ticket 04's data):
+    // the page must name whose price is being read.
+    const thirdParty = models.filter((model) => model.referenceInferenceProvider !== null);
+    check(
+      "data has Models with a Reference inference provider (kimi-k2-5, minimax-m2-5)",
+      thirdParty.map((model) => model.id).join(",") === "kimi-k2-5,minimax-m2-5",
+      thirdParty.map((model) => model.id).join(","),
+    );
+
+    for (const model of thirdParty) {
+      await page.goto(`${base}/models/${model.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      const body = await bodyText();
+      check(
+        `${model.id} names its Reference inference provider`,
+        body.includes("Reference inference provider") &&
+          body.includes(`rate from ${model.referenceInferenceProvider}`),
+        `expected "rate from ${model.referenceInferenceProvider}"`,
+      );
+    }
+
+    // A first-party rate names no third party.
+    const firstParty = models.find(
+      (model) => model.referenceInferenceProvider === null && model.inputPricePer1M !== null,
+    );
+    if (firstParty !== undefined) {
+      await page.goto(`${base}/models/${firstParty.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check(
+        "a first-party rate names no Reference inference provider",
+        !(await bodyText()).includes("Reference inference provider"),
+      );
+    }
+  });
+
+  await step("alternate Evaluation settings render on the Model page", async () => {
+    // A real Model with a pair recorded under more than one Evaluation
+    // setting, found from the data (the leaderboard's Score details panel
+    // shows the same pair).
+    const pairWithAlternates = scores.find((score) =>
+      scores.some(
+        (other) =>
+          other.modelId === score.modelId &&
+          other.benchmarkId === score.benchmarkId &&
+          other.evaluationSetting !== score.evaluationSetting,
+      ),
+    );
+    if (pairWithAlternates === undefined) {
+      check("data has a pair with alternate Evaluation settings", false);
+      return;
+    }
+    const model = models.find((candidate) => candidate.id === pairWithAlternates.modelId)!;
+    const benchmark = catalogue.find((candidate) => candidate.id === pairWithAlternates.benchmarkId)!;
+    const pair = scores.filter(
+      (score) => score.modelId === model.id && score.benchmarkId === benchmark.id,
+    );
+    const primary = pair.find((score) => score.isPrimary)!;
+    const alternates = pair.filter((score) => !score.isPrimary);
+
+    await page.goto(`${base}/models/${model.id}`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const sectionText =
+      (await page.locator(`section:has(h2 a[href="/benchmarks/${benchmark.id}"])`).textContent()) ?? "";
+
+    check(
+      "the pair's section shows the Primary score and every alternate Evaluation setting",
+      sectionText.includes("Primary score") &&
+        sectionText.includes(String(primary.value)) &&
+        alternates.every(
+          (score) =>
+            sectionText.includes(String(score.value)) &&
+            sectionText.includes(score.evaluationSetting),
+        ),
+    );
+    check(
+      "the exclusion note renders: alternates never feed the Average or charts",
+      sectionText.includes("Excluded from the Average"),
+    );
+    check(
+      "the verified-semantics note renders",
+      sectionText.includes(
+        "Verified means the data owner checked the value and Evaluation setting against the linked Source URL, not an independent reproduction",
+      ),
+    );
+  });
+
+  await step("every Model in the data package has a directly addressable page", async () => {
+    for (const model of models) {
+      await page.goto(`${base}/models/${model.id}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      const h1 = await page.locator("h1").textContent();
+      check(`h1 renders for ${model.id}`, h1 === model.name, h1 ?? "null");
+    }
+  });
+
+  await step("unknown Model id gets a proper not-found view", async () => {
+    await page.goto(`${base}/models/definitely-not-a-model`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    check("h1 is Model not found", (await page.locator("h1").textContent()) === "Model not found");
+    check("the unknown id is shown", (await bodyText()).includes("definitely-not-a-model"));
+  });
+
+  await step("the leaderboard links Model names to their pages", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // Every row's Model name is a link to that Model's page.
+    const linkCount = await page.locator('tbody th a[href^="/models/"]').count();
+    check("every leaderboard row links its Model name", linkCount === models.length, `${linkCount} links`);
+
+    // Client-side navigation via a real link click.
+    await page.locator(`tbody th a[href="/models/${maverick?.id ?? models[0]!.id}"]`).first().click();
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    check(
+      "click navigates to the Model route",
+      pathname() === `/models/${maverick?.id ?? models[0]!.id}`,
+      page.url(),
+    );
+    check("focus moves to the page content", (await page.locator("main:focus").count()) === 1);
   });
 }
 

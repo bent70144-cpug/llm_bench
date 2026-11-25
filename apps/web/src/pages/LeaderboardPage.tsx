@@ -23,7 +23,7 @@ import {
   type SortColumn,
 } from "@llm-bench/scoring";
 import { Link } from "../router";
-import { benchmarkPath } from "../routes";
+import { benchmarkPath, modelPath } from "../routes";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
 import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
@@ -349,7 +349,9 @@ export function LeaderboardPage() {
                 });
                 return (
                   <tr key={model.id}>
-                    <th scope="row">{model.name}</th>
+                    <th scope="row">
+                      <Link to={modelPath(model.id)}>{model.name}</Link>
+                    </th>
                     <td className="text">{model.provider}</td>
                     <td className="text">
                       <span>{model.license}</span>
@@ -445,7 +447,8 @@ export function LeaderboardPage() {
         Models under 50% Coverage of the active selection carry an &ldquo;Under 50%
         Coverage&rdquo; badge. The best Score per Benchmark is highlighted. Missing Scores are
         shown as &ldquo;n/a&rdquo;, never as zero, and each Score links to its published source.
-        Each Benchmark&rsquo;s name links to its detail page.
+        Each Benchmark&rsquo;s name links to its detail page, and so does each Model&rsquo;s
+        name.
       </p>
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for

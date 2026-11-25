@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Model } from "@llm-bench/schema";
 import { modelPath, resolveRoute } from "../../apps/web/src/routes";
+import { startSpaStaticServer } from "./lib/spa-static-server";
 
 /**
  * End-to-end proof (ticket 09): every Model in the data package has a
@@ -211,5 +212,41 @@ describe("Model detail pages (ticket 09)", () => {
       expect(bundle).toContain("never as zero");
     },
     480_000,
+  );
+
+  it(
+    "serves direct navigation to every Model route through the SPA fallback",
+    async () => {
+      ensureBuilt();
+      const indexHtml = readFileSync(path.join(DIST_DIR, "index.html"), "utf8");
+
+      const server = await startSpaStaticServer(DIST_DIR);
+      const base = `http://127.0.0.1:${server.port}`;
+      try {
+        // A direct navigation is a plain GET — exactly what a browser sends
+        // for a shared link or a refresh. Every Model route (and the
+        // unknown-id view, and a query string) must return the app shell,
+        // which is what the vercel.json catch-all rewrite does in
+        // production.
+        for (const model of readModels()) {
+          const response = await fetch(`${base}/models/${model.id}`);
+          expect(response.status, model.id).toBe(200);
+          expect(response.headers.get("content-type")).toContain("text/html");
+          expect(await response.text()).toBe(indexHtml);
+        }
+
+        for (const pathname of [
+          "/models/not-in-the-data-package", // client-side not-found view
+          "/models/kimi-k2-5?selection=mmlu-pro", // query strings survive the rewrite
+        ]) {
+          const response = await fetch(`${base}${pathname}`);
+          expect(response.status, pathname).toBe(200);
+          expect(await response.text()).toBe(indexHtml);
+        }
+      } finally {
+        await server.close();
+      }
+    },
+    60_000,
   );
 });
