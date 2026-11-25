@@ -387,6 +387,37 @@ a {
   color: light-dark(#64748b, #94a3b8);
 }
 
+/* Exports (ticket 12): the three download controls under the table. */
+.export-controls .export-note {
+  margin: 0;
+  max-width: 46rem;
+  font-size: 0.875rem;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+.export-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.export-buttons button {
+  padding: 0.4rem 0.875rem;
+  border: 1px solid light-dark(#64748b, #475569);
+  border-radius: 0.375rem;
+  background: light-dark(#ffffff, #0f172a);
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.export-buttons button:hover {
+  border-color: light-dark(#1d4ed8, #93c5fd);
+  color: light-dark(#1d4ed8, #93c5fd);
+}
+
 /* Score provenance (ticket 07) */
 
 /* A score cell: the value anchor to the source URL plus the ⓘ button that

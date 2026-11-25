@@ -380,6 +380,31 @@ describe("viewExportToCsv", () => {
     expect(view.metadata.aggregate).toBe("Average");
     expect(view.rows[0]!.average).toBe(85);
   });
+
+  it("rounds the aggregate to 6 decimals — IEEE-754 noise never ships", () => {
+    // Hand-computed: (91.31 + 99.79 + 91.89 + 75.6) / 4 = 89.6475 exactly,
+    // but the naive float sum is 89.64750000000001 in IEEE-754.
+    const view = buildViewExport({
+      rows: [makeModel()],
+      benchmarks: [
+        makeBenchmark({ id: "b1" }),
+        makeBenchmark({ id: "b2" }),
+        makeBenchmark({ id: "b3" }),
+        makeBenchmark({ id: "b4" }),
+      ],
+      scores: [
+        makeScore({ modelId: "model-a", benchmarkId: "b1", value: 91.31 }),
+        makeScore({ modelId: "model-a", benchmarkId: "b2", value: 99.79 }),
+        makeScore({ modelId: "model-a", benchmarkId: "b3", value: 91.89 }),
+        makeScore({ modelId: "model-a", benchmarkId: "b4", value: 75.6 }),
+      ],
+      state: makeState({ benchmarkIds: ["b1", "b2", "b3", "b4"] }),
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    expect(view.rows[0]!.average).toBe(89.6475);
+    expect(viewExportToCsv(view)).toContain(",89.6475,(4/4),");
+  });
 });
 
 describe("buildFullDatasetExport", () => {

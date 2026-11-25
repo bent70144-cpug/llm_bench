@@ -783,7 +783,8 @@ export interface ViewExportRow {
   };
   /**
    * The active aggregate — the Average, or the Weighted Average when weights
-   * are active on the selection — at full stored precision. Null when the
+   * are active on the selection — rounded to 6 decimal places (enough to
+   * strip IEEE-754 noise, far more than any real precision). Null when the
    * Model's Coverage is 0, never zero.
    */
   average: number | null;
@@ -878,7 +879,7 @@ export function buildViewExport(input: ViewExportInput): ViewExport {
         outputPricePer1M: model.outputPricePer1M,
         referenceInferenceProvider: model.referenceInferenceProvider,
       },
-      average: result.average,
+      average: result.average === null ? null : Number(result.average.toFixed(6)),
       coverage: { covered: result.coverage, selected: result.selected },
       scores: exportedScores,
     };

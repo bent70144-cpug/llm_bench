@@ -30,6 +30,7 @@ import {
 } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath, modelPath } from "../routes";
+import { ExportControls } from "../components/ExportControls";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
 import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
@@ -611,6 +612,10 @@ export function LeaderboardPage() {
           </>
         ) : null}
       </p>
+
+      {/* Exports (ticket 12): the current view (CSV/JSON) and the full raw
+          dataset (JSON), generated from the rows and view state above. */}
+      <ExportControls rows={rows} viewState={urlState} />
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for
           the hovered/focused score cell, and the Score details panel. */}
