@@ -1,5 +1,11 @@
-import { useMemo, useState } from "react";
-import { LICENSE_VALUES, type License } from "@llm-bench/schema";
+import { useId, useMemo, useState } from "react";
+import {
+  LICENSE_VALUES,
+  type Benchmark,
+  type License,
+  type Model,
+  type Score,
+} from "@llm-bench/schema";
 import { benchmarks, models, scores } from "@llm-bench/data";
 import {
   bestValueByBenchmark,
@@ -18,6 +24,8 @@ import {
 } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath } from "../routes";
+import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
+import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
 /**
  * The leaderboard renders 100% from the data package: every row, column,
@@ -148,6 +156,16 @@ export function LeaderboardPage() {
     column: "average",
     direction: "desc",
   });
+  // Score provenance (ticket 07): the tooltip anchors to the hovered or
+  // focused score cell; the Score details panel opens for one pair.
+  const tooltipId = useId();
+  const [scoreTooltip, setScoreTooltip] = useState<{
+    anchor: HTMLElement;
+    score: Score;
+  } | null>(null);
+  const [detailPair, setDetailPair] = useState<{ model: Model; benchmark: Benchmark } | null>(
+    null,
+  );
 
   const visibleBenchmarks = useMemo(
     () => selectedBenchmarks(benchmarks, selectedBenchmarkIds),
@@ -377,12 +395,38 @@ export function LeaderboardPage() {
                           {score === undefined ? (
                             <span className="missing">n/a</span>
                           ) : (
-                            <a
-                              href={score.sourceUrl}
-                              title={`Source type: ${score.sourceType} · Evaluation setting: ${score.evaluationSetting} · publishedDate ${score.publishedDate} · retrievedDate ${score.retrievedDate}`}
+                            <span
+                              className="score-cell"
+                              onMouseEnter={(event) =>
+                                setScoreTooltip({ anchor: event.currentTarget, score })
+                              }
+                              onMouseLeave={() => setScoreTooltip(null)}
+                              onFocus={(event) =>
+                                setScoreTooltip({ anchor: event.currentTarget, score })
+                              }
+                              onBlur={() => setScoreTooltip(null)}
                             >
-                              {score.value}
-                            </a>
+                              {/* The value stays a real anchor to the Score's
+                                  source URL; the tooltip and the details
+                                  button beside it carry the provenance. */}
+                              <a
+                                href={score.sourceUrl}
+                                className="score-link"
+                                aria-describedby={tooltipId}
+                              >
+                                {score.value}
+                              </a>
+                              <button
+                                type="button"
+                                className="score-details-button"
+                                aria-haspopup="dialog"
+                                aria-label={`Score details: ${model.name} on ${benchmark.name}`}
+                                aria-describedby={tooltipId}
+                                onClick={() => setDetailPair({ model, benchmark })}
+                              >
+                                <span aria-hidden="true">ⓘ</span>
+                              </button>
+                            </span>
                           )}
                         </td>
                       );
@@ -403,6 +447,20 @@ export function LeaderboardPage() {
         shown as &ldquo;n/a&rdquo;, never as zero, and each Score links to its published source.
         Each Benchmark&rsquo;s name links to its detail page.
       </p>
+
+      {/* Score provenance affordances (ticket 07): one shared tooltip for
+          the hovered/focused score cell, and the Score details panel. */}
+      {scoreTooltip !== null && (
+        <ProvenanceTooltip id={tooltipId} anchor={scoreTooltip.anchor} score={scoreTooltip.score} />
+      )}
+      {detailPair !== null && (
+        <ScoreDetailDialog
+          model={detailPair.model}
+          benchmark={detailPair.benchmark}
+          scores={scores}
+          onClose={() => setDetailPair(null)}
+        />
+      )}
     </>
   );
 }

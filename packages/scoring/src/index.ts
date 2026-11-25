@@ -99,6 +99,41 @@ export function primaryScoreFor(
   );
 }
 
+/** All Scores of one Model and Benchmark pair, split by Primary status. */
+export interface PairScores {
+  /**
+   * The Primary score — the single Score per Model and Benchmark that feeds
+   * the Average, best-Score highlighting, and charts. Undefined when the
+   * Model has no Score for the Benchmark at all.
+   */
+  primary: Score | undefined;
+  /**
+   * The Scores recorded under alternate Evaluation settings for the same
+   * pair, in data-package order. They are shown for provenance and are
+   * never part of the Average, highlighting, or charts.
+   */
+  alternates: Score[];
+}
+
+/**
+ * Splits every Score of one Model and Benchmark pair into the Primary score
+ * and the alternate Evaluation settings — the data behind the Score
+ * provenance view (leaderboard Score details panel and Model detail page).
+ */
+export function scoresForPair(
+  modelId: string,
+  benchmarkId: string,
+  scores: readonly Score[],
+): PairScores {
+  const forPair = scores.filter(
+    (score) => score.modelId === modelId && score.benchmarkId === benchmarkId,
+  );
+  return {
+    primary: forPair.find((score) => score.isPrimary),
+    alternates: forPair.filter((score) => !score.isPrimary),
+  };
+}
+
 /**
  * Maps each Benchmark id to the best Primary score value across all Models,
  * for highlighting the best Score per Benchmark. Non-primary Scores are

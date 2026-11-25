@@ -282,6 +282,9 @@ importers:
       '@llm-bench/config':
         specifier: workspace:*
         version: link:../config
+      '@llm-bench/data':
+        specifier: workspace:*
+        version: link:../data
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(supports-color@7.2.0)
