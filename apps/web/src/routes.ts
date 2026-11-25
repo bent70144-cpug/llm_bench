@@ -4,10 +4,10 @@
  *
  * The route shape is `/` (the leaderboard), `/benchmarks/:id` (one page per
  * Benchmark, created automatically by the data package), `/models/:id` (one
- * page per Model, likewise created automatically by the data package), and
- * a generic not-found page for everything else. Routes that later tickets
- * will own (`/compare`) are deliberately NOT special-cased: they fall
- * through to the generic not-found page until they are built.
+ * page per Model, likewise created automatically by the data package),
+ * `/compare` (the side-by-side comparison of 2–4 Models — WHICH Models is
+ * URL query state, the `compare` parameter, not a path segment), and a
+ * generic not-found page for everything else.
  *
  * This module is free of React and DOM APIs on purpose: it is the route
  * table as data, unit-testable anywhere, and the only thing later tickets
@@ -16,6 +16,9 @@
 
 /** The leaderboard lives at the root. */
 export const LEADERBOARD_PATH = "/";
+
+/** The compare view's path; the compared Model ids are query parameters. */
+export const COMPARE_PATH = "/compare";
 
 const BENCHMARK_ROUTE_PREFIX = "/benchmarks/";
 const MODEL_ROUTE_PREFIX = "/models/";
@@ -45,6 +48,16 @@ export interface ModelRoute {
   modelId: string;
 }
 
+/**
+ * The compare view. Which 2–4 Models are compared is query state (the
+ * `compare` parameter, decoded by the scoring package's URL-state codec);
+ * the page itself owns the guard rails for too few, too many, or unknown
+ * Model ids.
+ */
+export interface CompareRoute {
+  page: "compare";
+}
+
 /** The generic not-found page for every path that is not a route. */
 export interface NotFoundRoute {
   page: "not-found";
@@ -55,6 +68,7 @@ export type Route =
   | LeaderboardRoute
   | BenchmarkRoute
   | ModelRoute
+  | CompareRoute
   | NotFoundRoute;
 
 /** The URL of one Benchmark's detail page. */
@@ -79,6 +93,10 @@ export function resolveRoute(pathname: string): Route {
 
   if (normalized === LEADERBOARD_PATH) {
     return { page: "leaderboard" };
+  }
+
+  if (normalized === COMPARE_PATH) {
+    return { page: "compare" };
   }
 
   const detailId = (prefix: string): string | null => {
