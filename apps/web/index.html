@@ -2,6 +2,23 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // No flash of the wrong theme (ticket 13): apply the stored choice
+      // before first paint. This runs as the first thing in <head>, ahead of
+      // the stylesheet and the app, so a reload never paints the other
+      // palette first. The theme is a local preference — it is deliberately
+      // NOT part of the shareable URL state.
+      (function () {
+        try {
+          var theme = localStorage.getItem("llm-bench-theme");
+          if (theme === "light" || theme === "dark") {
+            document.documentElement.dataset.theme = theme;
+          }
+        } catch (error) {
+          /* storage unavailable — the palette follows prefers-color-scheme */
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LLM Bench</title>
   </head>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { benchmarks, models } from "@llm-bench/data";
+import { ThemeToggle } from "./ThemeToggle";
 import { useLocation } from "./router";
 import { resolveRoute } from "./routes";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
@@ -12,7 +13,8 @@ import { NotFoundPage } from "./pages/NotFoundPage";
  * renders the page. Each page renders exactly one h1 and its own sections;
  * the shell owns the <main> element so it can move keyboard focus to the
  * top of the page after client-side navigation, and it keeps the document
- * title in sync with the rendered page.
+ * title in sync with the rendered page. The site header (with the theme
+ * toggle) sits above <main> on every page.
  */
 
 /** The document title for the leaderboard (the index.html default). */
@@ -57,17 +59,28 @@ function App() {
   }, [pathname]);
 
   return (
-    <main ref={mainRef} tabIndex={-1}>
-      {route.page === "leaderboard" ? (
-        <LeaderboardPage />
-      ) : route.page === "benchmark" ? (
-        <BenchmarkPage benchmarkId={route.benchmarkId} />
-      ) : route.page === "model" ? (
-        <ModelPage modelId={route.modelId} />
-      ) : (
-        <NotFoundPage />
-      )}
-    </main>
+    <>
+      {/* The first tab stop (ticket 13): keyboard users can jump past the
+          site chrome straight into the page content. Off-screen until
+          focused, so it never disturbs the visual layout. */}
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <header className="site-header">
+        <ThemeToggle />
+      </header>
+      <main id="main-content" ref={mainRef} tabIndex={-1}>
+        {route.page === "leaderboard" ? (
+          <LeaderboardPage />
+        ) : route.page === "benchmark" ? (
+          <BenchmarkPage benchmarkId={route.benchmarkId} />
+        ) : route.page === "model" ? (
+          <ModelPage modelId={route.modelId} />
+        ) : (
+          <NotFoundPage />
+        )}
+      </main>
+    </>
   );
 }
 

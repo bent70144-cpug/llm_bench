@@ -8,6 +8,7 @@
     "manage": "tsx src/manage-data.ts",
     "import": "tsx src/import-scores.ts",
     "browser-check": "tsx src/browser-check.ts",
+    "perf-check": "tsx src/perf-check.ts",
     "lint": "eslint . && tsc --noEmit",
     "test": "vitest run"
   },
