@@ -1,6 +1,7 @@
 import { BackLink } from "../BackLink";
 import { benchmarks, models, scores } from "@llm-bench/data";
 import { bestValueByBenchmark, primaryScoreFor } from "@llm-bench/scoring";
+import { sourceHostname } from "../provenance";
 
 /**
  * The Benchmark detail page — 100% data-driven. Everything shown here comes
@@ -9,15 +10,6 @@ import { bestValueByBenchmark, primaryScoreFor } from "@llm-bench/scoring";
  * ids, or columns are hardcoded in the web app. An unknown id renders the
  * page's own not-found view.
  */
-
-/** The host of a source URL, shown as the visible link text. */
-function sourceHostname(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
 
 export function BenchmarkPage({ benchmarkId }: { benchmarkId: string }) {
   const benchmark = benchmarks.find((candidate) => candidate.id === benchmarkId);

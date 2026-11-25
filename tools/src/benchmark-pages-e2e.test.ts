@@ -95,9 +95,9 @@ describe("Benchmark detail pages (ticket 08)", () => {
     });
 
     // Everything else is the generic not-found page — including the
-    // not-yet-built /models/:id and /compare routes (tickets 09/10) and
-    // malformed Benchmark paths.
-    expect(resolveRoute("/models/gpt-5-2")).toEqual({ page: "not-found" });
+    // not-yet-built /compare route (ticket 10) and malformed Benchmark
+    // paths. /models/:id is a Model route since ticket 09.
+    expect(resolveRoute("/models/gpt-5-2")).toEqual({ page: "model", modelId: "gpt-5-2" });
     expect(resolveRoute("/compare")).toEqual({ page: "not-found" });
     expect(resolveRoute("/benchmarks")).toEqual({ page: "not-found" });
     expect(resolveRoute("/benchmarks/")).toEqual({ page: "not-found" });
@@ -183,7 +183,7 @@ describe("Benchmark detail pages (ticket 08)", () => {
           "/",
           "/benchmarks/not-in-the-data-package", // client-side not-found view
           "/benchmarks/gpqa-diamond?selection=gpqa-diamond", // query strings survive the rewrite
-          "/models/gpt-5-2", // ticket 09; generic not-found for now
+          "/models/gpt-5-2", // ticket 09; the SPA fallback serves it too
           "/compare", // ticket 10; generic not-found for now
         ]) {
           const response = await fetch(`${base}${pathname}`);
