@@ -1,0 +1,20 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "tools"
+
+# pnpm settings live here (not .npmrc): pnpm 11+ resolves workspace settings
+# from the workspace manifest only.
+#
+# minimumReleaseAgeExclude entries were recorded by pnpm itself (release-age
+# supply-chain policy exclusions for packages published very recently).
+minimumReleaseAgeExclude:
+  - "@types/react@19.3.3"
+  - "@vitest/mocker@5.1.2"
+  - "@vitest/spy@5.1.2"
+  - vitest@5.1.2
+
+# pnpm 12 blocks dependency postinstall scripts by default; esbuild (used by
+# vite and tsx) needs its postinstall to install its platform binary.
+allowBuilds:
+  esbuild: true

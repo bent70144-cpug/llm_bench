@@ -1,0 +1,38 @@
+[
+  {
+    "id": "gpqa-diamond",
+    "name": "GPQA Diamond",
+    "category": "reasoning",
+    "description": "The 198-question hardest and highest-quality subset of GPQA (Graduate-Level Google-Proof Q&A), a dataset of 448 multiple-choice questions in biology, physics, and chemistry written and validated by PhD-level domain experts. Questions are designed to resist web search: highly skilled non-expert validators with unrestricted web access and over 30 minutes per question reach only 34% accuracy.",
+    "metric": "Accuracy (percent of multiple-choice questions answered correctly)",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://arxiv.org/abs/2311.12022",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Small evaluation set (198 questions), so differences of a few percentage points fall within noise. Public distribution creates a risk of training-data contamination. Coverage is limited to biology, physics, and chemistry. Expert PhD-level validators themselves reach only about 65% accuracy, so even skilled humans do not approach the ceiling.",
+    "evaluationSettingNotes": "Frontier Model providers typically self-report GPQA Diamond accuracy at a stated reasoning-effort level with their own sampling parameters (for example temperature and top-p); the number of shots is often unspecified in model cards. The original paper reports 0-shot and few-shot baselines for earlier models. The Evaluation setting recorded on each Score states the conditions its source actually reported."
+  },
+  {
+    "id": "mmlu-pro",
+    "name": "MMLU-Pro",
+    "category": "knowledge",
+    "description": "A more robust and challenging multi-task language-understanding Benchmark extending MMLU: 12,032 questions across 14 disciplines with ten answer options instead of four, more reasoning-focused questions, and the trivial or noisy MMLU questions removed. Option sets were augmented with plausible distractors and reviewed by a panel of experts.",
+    "metric": "Accuracy (percent of multiple-choice questions answered correctly)",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://arxiv.org/abs/2406.01574",
+    "canonicalSources": [
+      { "sourceType": "paper" },
+      { "sourceType": "provider" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Multiple-choice format rewards recognition over generation, and public distribution creates a contamination risk. Scores are much lower than on the original MMLU (16 to 33 points) and answer-key corrections have been issued repeatedly since release, so results from different eras are not perfectly comparable. The public leaderboard mixes entries run by its maintainers with results submitted by others.",
+    "evaluationSettingNotes": "The official evaluation normally uses 5-shot prompting, with some Providers reporting 0-shot; Chain-of-Thought reasoning scores up to about 20 points higher than direct answering on this Benchmark. The Evaluation setting recorded on each Score states the conditions its source actually reported."
+  }
+]

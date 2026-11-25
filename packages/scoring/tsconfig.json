@@ -1,0 +1,7 @@
+{
+  "extends": "@llm-bench/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["src"]
+}

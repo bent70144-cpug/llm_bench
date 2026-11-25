@@ -1,0 +1,28 @@
+{
+  "name": "web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint . && tsc --noEmit"
+  },
+  "dependencies": {
+    "@llm-bench/data": "workspace:*",
+    "@llm-bench/schema": "workspace:*",
+    "@llm-bench/scoring": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@llm-bench/config": "workspace:*",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  }
+}

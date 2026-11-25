@@ -1,0 +1,17 @@
+[
+  {
+    "id": "kimi-k3-1-pro",
+    "name": "Kimi K3.1 Pro",
+    "provider": "Moonshot AI",
+    "license": "open-weights",
+    "licenseName": "Kimi K3.1 Pro License",
+    "releaseDate": "2026-11-02",
+    "contextWindow": 1048576,
+    "inputPricePer1M": 2.0,
+    "outputPricePer1M": 10.0,
+    "referenceInferenceProvider": null,
+    "lastUpdated": "2026-11-26",
+    "sourceUrl": "https://huggingface.co/moonshotai/Kimi-K3.1-Pro",
+    "notes": "2.8T-parameter Mixture-of-Experts model (104B activated), natively multimodal. Announced 2026-10-24; open weights released 2026-11-02. Prices are Moonshot first-party API rates for the kimi-k3.1-pro endpoint per 1M tokens (cache-miss input; cached input is billed at $0.20/MTok). A high-speed variant, kimi-k3.1-pro-highspeed, is priced separately."
+  }
+]
