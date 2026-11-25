@@ -2,5 +2,61 @@
   {
     "name": "Max reasoning effort (temperature 1.0, top-p 0.95)",
     "description": "Results produced with reasoning effort set to max, temperature 1.0, and top-p 0.95, as stated in the Kimi K3.1 Pro model card."
+  },
+  {
+    "name": "0-shot",
+    "description": "No in-context exemplars. Used for TruthfulQA (MC2), IFEval, and some MMLU, HumanEval, and WinoGrande reports."
+  },
+  {
+    "name": "0-shot CoT",
+    "description": "Zero-shot with chain-of-thought prompting. Used for GPQA Diamond, AIME 2025, MATH-500 (reasoning-model convention), and MMLU-Pro (0-shot CoT providers, e.g. Gemini per the TIGER-Lab note)."
+  },
+  {
+    "name": "3-shot",
+    "description": "Three exemplars, answer-only. Used for MBPP (standard) and LiveCodeBench 'Pass@1' (DeepSeek convention)."
+  },
+  {
+    "name": "3-shot CoT",
+    "description": "Three exemplars with chain-of-thought. Used for BBH (standard, official cot-prompts) and LiveCodeBench 'Pass@1-COT' (DeepSeek convention)."
+  },
+  {
+    "name": "4-shot",
+    "description": "Four exemplars. Used for MATH-500 / MATH final-answer EM (DeepSeek convention)."
+  },
+  {
+    "name": "4-shot CoT",
+    "description": "Four exemplars with chain-of-thought. Reserved for sources that report MATH-family scores this way."
+  },
+  {
+    "name": "5-shot",
+    "description": "Five exemplars. Used for MMLU (standard) and WinoGrande (standard)."
+  },
+  {
+    "name": "5-shot CoT",
+    "description": "Five exemplars with chain-of-thought. Used for MMLU-Pro (paper and official leaderboard standard)."
+  },
+  {
+    "name": "10-shot",
+    "description": "Ten exemplars. Used for HellaSwag (standard)."
+  },
+  {
+    "name": "pass@1",
+    "description": "Single-attempt functional correctness where the shot count is undefined by the source (agentic scaffold runs). Used for SWE-bench Verified."
+  },
+  {
+    "name": "pass^1",
+    "description": "First-attempt task success (official tau2-bench notation, verified on taubench.com). Used for tau2-bench."
+  },
+  {
+    "name": "with thinking",
+    "description": "Reasoning mode / high effort enabled. Used for ARC-AGI-2 leaderboard entries labeled e.g. 'Grok 4 (Thinking)'."
+  },
+  {
+    "name": "no thinking",
+    "description": "Reasoning mode disabled. Used for ARC-AGI-2 no-thinking entries."
+  },
+  {
+    "name": "128k context",
+    "description": "Long-context evaluation at 128K tokens. Used for RULER. Other lengths (4k/8k/16k/32k/64k context) are added by data PR when a Score needs them."
   }
 ]

@@ -297,6 +297,9 @@ importers:
       '@llm-bench/schema':
         specifier: workspace:*
         version: link:../packages/schema
+      '@llm-bench/scoring':
+        specifier: workspace:*
+        version: link:../packages/scoring
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

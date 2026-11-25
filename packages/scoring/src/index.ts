@@ -1,4 +1,4 @@
-import type { Score } from "@llm-bench/schema";
+import type { Benchmark, License, Model, Score } from "@llm-bench/schema";
 
 /**
  * @llm-bench/scoring — pure functions, no React.
@@ -95,4 +95,181 @@ export function bestValueByBenchmark(scores: readonly Score[]): ReadonlyMap<stri
     }
   }
   return best;
+}
+
+/**
+ * The default Benchmark selection: the ids of the core-Tier Benchmarks, in
+ * catalogue order. Tier drives the default directly, so the web app never
+ * hardcodes a selection.
+ */
+export function defaultSelectedBenchmarkIds(benchmarks: readonly Benchmark[]): string[] {
+  return benchmarks.filter((benchmark) => benchmark.tier === "core").map((benchmark) => benchmark.id);
+}
+
+/**
+ * Derives the leaderboard's Benchmark columns from a selection: the selected
+ * Benchmarks in catalogue (data) order. Unknown ids and duplicates are
+ * ignored; an empty selection yields no columns.
+ */
+export function selectedBenchmarks(
+  benchmarks: readonly Benchmark[],
+  selectedIds: readonly string[],
+): Benchmark[] {
+  const selected = new Set(selectedIds);
+  return benchmarks.filter((benchmark) => selected.has(benchmark.id));
+}
+
+/** Direction of a leaderboard column sort. */
+export type SortDirection = "asc" | "desc";
+
+/** The fixed leaderboard columns derived from Model fields. */
+export type ModelColumnId =
+  | "model-name"
+  | "provider"
+  | "license"
+  | "context-window"
+  | "input-price"
+  | "output-price"
+  | "average"
+  | "coverage";
+
+/** A sortable leaderboard column: a Model field column or a Benchmark id. */
+export type SortColumn = ModelColumnId | (string & {});
+
+/** The active column sort. */
+export interface LeaderboardSort {
+  column: SortColumn;
+  direction: SortDirection;
+}
+
+/** Everything a column sort needs besides the Models themselves. */
+export interface LeaderboardContext {
+  /** All Scores; Primary scores feed the Average, Coverage, and Benchmark columns. */
+  scores: readonly Score[];
+  /** The selected Benchmark ids the Average and Coverage are computed over. */
+  benchmarkIds: readonly string[];
+}
+
+/** The sortable value of one column for one Model; null means missing. */
+type ColumnValue = string | number | null;
+
+function columnValueFor(model: Model, column: SortColumn, context: LeaderboardContext): ColumnValue {
+  switch (column) {
+    case "model-name":
+      return model.name;
+    case "provider":
+      return model.provider;
+    case "license":
+      return model.license;
+    case "context-window":
+      return model.contextWindow;
+    case "input-price":
+      return model.inputPricePer1M;
+    case "output-price":
+      return model.outputPricePer1M;
+    case "average":
+      return computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }).average;
+    case "coverage":
+      return computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }).coverage;
+    default:
+      // Any other column id is a Benchmark id; missing Scores sort last.
+      return primaryScoreFor(model.id, column, context.scores)?.value ?? null;
+  }
+}
+
+/**
+ * Compares two column values in the given direction. Missing values (null)
+ * always sort last — "n/a" is never treated as zero — and everything else
+ * compares naturally (strings case-insensitively).
+ */
+function compareColumnValues(a: ColumnValue, b: ColumnValue, direction: SortDirection): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  let comparison: number;
+  if (typeof a === "string" || typeof b === "string") {
+    const left = String(a).toLowerCase();
+    const right = String(b).toLowerCase();
+    comparison = left < right ? -1 : left > right ? 1 : 0;
+  } else {
+    comparison = a < b ? -1 : a > b ? 1 : 0;
+  }
+  return direction === "asc" ? comparison : -comparison;
+}
+
+/**
+ * Sorts the Models by any leaderboard column — a Model field column or a
+ * Benchmark column (by its Primary scores). Ties keep the data-package
+ * order (stable), and missing values always sort last in both directions.
+ */
+export function sortModelsByColumn(
+  models: readonly Model[],
+  sort: LeaderboardSort,
+  context: LeaderboardContext,
+): Model[] {
+  const values = new Map<string, ColumnValue>();
+  for (const model of models) {
+    values.set(model.id, columnValueFor(model, sort.column, context));
+  }
+  return [...models].sort((left, right) =>
+    compareColumnValues(
+      values.get(left.id) ?? null,
+      values.get(right.id) ?? null,
+      sort.direction,
+    ),
+  );
+}
+
+/** Search and filter criteria for the Model list. Empty fields match all. */
+export interface ModelQuery {
+  /** Case-insensitive substring match against Model name or Provider. */
+  search?: string;
+  /** When non-empty, only these License categories match. */
+  licenses?: readonly License[];
+  /** When non-empty, only these Providers match. */
+  providers?: readonly string[];
+  /** Minimum Context window in tokens. */
+  minContextWindow?: number;
+  /** Maximum input price per 1M tokens; Models without a public rate never match. */
+  maxInputPricePer1M?: number;
+  /** Maximum output price per 1M tokens; Models without a public rate never match. */
+  maxOutputPricePer1M?: number;
+}
+
+/**
+ * Filters Models by search and filter criteria, combined with AND semantics.
+ * A search matches the Model name or the Provider; price ceilings exclude
+ * Models with no public API rate (self-hosted).
+ */
+export function filterModels(models: readonly Model[], query: ModelQuery): Model[] {
+  const search = query.search?.trim().toLowerCase() ?? "";
+  return models.filter((model) => {
+    if (search !== "") {
+      const matches =
+        model.name.toLowerCase().includes(search) || model.provider.toLowerCase().includes(search);
+      if (!matches) return false;
+    }
+    if (query.licenses !== undefined && query.licenses.length > 0) {
+      if (!query.licenses.includes(model.license)) return false;
+    }
+    if (query.providers !== undefined && query.providers.length > 0) {
+      if (!query.providers.includes(model.provider)) return false;
+    }
+    if (query.minContextWindow !== undefined && model.contextWindow < query.minContextWindow) {
+      return false;
+    }
+    if (
+      query.maxInputPricePer1M !== undefined &&
+      (model.inputPricePer1M === null || model.inputPricePer1M > query.maxInputPricePer1M)
+    ) {
+      return false;
+    }
+    if (
+      query.maxOutputPricePer1M !== undefined &&
+      (model.outputPricePer1M === null || model.outputPricePer1M > query.maxOutputPricePer1M)
+    ) {
+      return false;
+    }
+    return true;
+  });
 }

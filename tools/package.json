@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@llm-bench/schema": "workspace:*",
+    "@llm-bench/scoring": "workspace:*",
     "tsx": "^4.23.15",
     "zod": "^4.6.7"
   },
