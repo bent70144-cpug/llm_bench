@@ -67,6 +67,25 @@ export function primaryScores(scores: readonly Score[]): Score[] {
 }
 
 /**
+ * The Coverage display form "(n/selected)": every Average is shown with
+ * its Coverage count against the number of selected Benchmarks.
+ */
+export function formatCoverage(result: AverageResult): string {
+  return `(${result.coverage}/${result.selected})`;
+}
+
+/**
+ * Whether a Model's Coverage is strictly under 50% of the selected
+ * Benchmarks — the condition for the "Under 50% Coverage" badge. Exactly
+ * 50% is NOT under and is never badged; with no Benchmark selected there
+ * is no Coverage to be under, so it is false as well.
+ */
+export function isUnderHalfCoverage(result: AverageResult): boolean {
+  if (result.selected <= 0) return false;
+  return 2 * result.coverage < result.selected;
+}
+
+/**
  * Returns the Primary score for one Model and Benchmark pair, or undefined
  * when the Model has no Primary score for it (rendered as "n/a", never 0).
  */

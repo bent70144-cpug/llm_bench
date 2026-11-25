@@ -6,6 +6,8 @@ import {
   computeAverage,
   defaultSelectedBenchmarkIds,
   filterModels,
+  formatCoverage,
+  isUnderHalfCoverage,
   primaryScoreFor,
   primaryScores,
   rankModelsByAverage,
@@ -391,6 +393,35 @@ describe("rankModelsByAverage", () => {
       "model-narrow", // "Narrow Model" (its only Score is on unselected bench-1)
       "model-unscored-z", // "Zulu Unscored"
     ]);
+  });
+});
+
+describe("formatCoverage", () => {
+  it("renders the Coverage display form (n/selected)", () => {
+    expect(formatCoverage({ average: 85, coverage: 2, selected: 3 })).toBe("(2/3)");
+    expect(formatCoverage({ average: 90, coverage: 12, selected: 12 })).toBe("(12/12)");
+  });
+
+  it("renders (0/selected) for a null-Average Model — never a zero Coverage that hides", () => {
+    expect(formatCoverage({ average: null, coverage: 0, selected: 12 })).toBe("(0/12)");
+  });
+});
+
+describe("isUnderHalfCoverage", () => {
+  it("is true strictly below 50% of the selected Benchmarks", () => {
+    expect(isUnderHalfCoverage({ average: 94.2, coverage: 1, selected: 12 })).toBe(true);
+    expect(isUnderHalfCoverage({ average: 83.2, coverage: 5, selected: 12 })).toBe(true);
+    expect(isUnderHalfCoverage({ average: null, coverage: 0, selected: 12 })).toBe(true);
+  });
+
+  it("is false at exactly 50% — 'under 50%' excludes the boundary — and above it", () => {
+    expect(isUnderHalfCoverage({ average: 85.3, coverage: 6, selected: 12 })).toBe(false);
+    expect(isUnderHalfCoverage({ average: 90, coverage: 1, selected: 1 })).toBe(false);
+    expect(isUnderHalfCoverage({ average: 90, coverage: 2, selected: 3 })).toBe(false);
+  });
+
+  it("is false when no Benchmark is selected — there is no Coverage to be under", () => {
+    expect(isUnderHalfCoverage({ average: null, coverage: 0, selected: 0 })).toBe(false);
   });
 });
 
