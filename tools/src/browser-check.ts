@@ -56,8 +56,8 @@ interface LocatorLike {
 }
 
 interface PageLike {
-  goto(url: string, options?: { waitUntil?: "load" }): Promise<unknown>;
-  reload(options?: { waitUntil?: "load" }): Promise<unknown>;
+  goto(url: string, options?: { waitUntil?: "load" | "domcontentloaded" }): Promise<unknown>;
+  reload(options?: { waitUntil?: "load" | "domcontentloaded" }): Promise<unknown>;
   goBack(): Promise<unknown>;
   url(): string;
   title(): Promise<string>;
@@ -65,6 +65,11 @@ interface PageLike {
   locator(selector: string): LocatorLike;
   on(event: "pageerror", listener: (error: Error) => void): void;
   close(): Promise<void>;
+  /** Evaluates a page expression (an IIFE string keeps it self-contained). */
+  evaluate<T>(expression: string): Promise<T>;
+  emulateMedia(options: { colorScheme: "light" | "dark" | "no-preference" }): Promise<void>;
+  setViewportSize(size: { width: number; height: number }): Promise<void>;
+  waitForFunction(expression: string, options?: { timeout?: number }): Promise<void>;
 }
 
 interface PlaywrightModule {
@@ -118,6 +123,84 @@ function discoverPlaywrightEntry(): string {
     `Playwright was not found (tried: ${candidates.join(", ")}). ` +
       "Set PLAYWRIGHT_ENTRY to the playwright package's index.js.",
   );
+}
+
+// --- WCAG contrast helpers (ticket 13 scripted a11y audit) ------------------
+
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+function parseColor(color: string): RgbColor | null {
+  const match = /rgba?\(([^)]+)\)/.exec(color);
+  if (match === null) return null;
+  const parts = match[1]!.split(",").map((part) => part.trim());
+  return { r: Number(parts[0]), g: Number(parts[1]), b: Number(parts[2]!), a: Number(parts[3] ?? "1") };
+}
+
+/** WCAG 2.x relative luminance of a parsed colour. */
+function relativeLuminance(color: RgbColor): number {
+  const channel = (value: number): number => {
+    const v = value / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const fg = parseColor(foreground);
+  let bg = parseColor(background);
+  if (fg === null || bg === null) return 0;
+  // Composite a translucent foreground over its background first.
+  if (fg.a < 1) {
+    bg = {
+      r: fg.a * fg.r + (1 - fg.a) * bg.r,
+      g: fg.a * fg.g + (1 - fg.a) * bg.g,
+      b: fg.a * fg.b + (1 - fg.a) * bg.b,
+      a: 1,
+    };
+  }
+  const l1 = relativeLuminance(fg.a < 1 ? bg! : fg);
+  const l2 = relativeLuminance(bg!);
+  const higher = Math.max(l1, l2);
+  const lower = Math.min(l1, l2);
+  return (higher + 0.05) / (lower + 0.05);
+}
+
+/** A page expression that samples how one element is painted. */
+function paintSampleExpression(selector: string): string {
+  return `(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (element === null) return null;
+    const style = getComputedStyle(element);
+    let background = "rgba(0, 0, 0, 0)";
+    for (let node = element; node !== null; node = node.parentElement) {
+      const color = getComputedStyle(node).backgroundColor;
+      if (color !== "rgba(0, 0, 0, 0)") { background = color; break; }
+    }
+    return {
+      color: style.color,
+      background,
+      outlineColor: style.outlineColor,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      borderColor: style.borderColor,
+      text: element.textContent === null ? "" : element.textContent.slice(0, 40),
+    };
+  })()`;
+}
+
+interface PaintSample {
+  color: string;
+  background: string;
+  outlineColor: string;
+  outlineStyle: string;
+  outlineWidth: string;
+  borderColor: string;
+  text: string;
 }
 
 // --- The checks ------------------------------------------------------------
@@ -273,18 +356,69 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     await page.goto(`${base}/benchmarks/mmlu-pro`, { waitUntil: "load" });
     await page.locator("h1").first().waitFor({ state: "visible" });
 
+    // Ticket 13 site chrome: the skip link is the first tab stop, the theme
+    // toggle second, then the page content begins with the back link.
     await page.keyboard.press("Tab");
     const firstTabStop = await page.locator(":focus").first().textContent();
     check(
-      "first tab stop is the back-to-leaderboard link",
-      firstTabStop === "Back to leaderboard",
+      "first tab stop is the skip-to-content link",
+      firstTabStop === "Skip to content",
       firstTabStop ?? "nothing focused",
+    );
+
+    await page.keyboard.press("Tab");
+    check(
+      "second tab stop is the theme toggle",
+      (await page.locator("button.theme-toggle:focus").count()) === 1,
+    );
+
+    await page.keyboard.press("Tab");
+    const thirdTabStop = await page.locator(":focus").first().textContent();
+    check(
+      "the tab order reaches the back-to-leaderboard link next",
+      thirdTabStop === "Back to leaderboard",
+      thirdTabStop ?? "nothing focused",
     );
 
     await page.keyboard.press("Enter");
     await page.locator("h1").first().waitFor({ state: "visible" });
     check("Enter on the link returns to the leaderboard", pathname() === "/");
     check("leaderboard h1 renders", (await page.locator("h1").textContent()) === "LLM Bench");
+  });
+
+  await step("the skip link jumps keyboard users straight to the content (ticket 13)", async () => {
+    await page.goto(`${base}/benchmarks/mmlu-pro`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    await page.keyboard.press("Tab");
+    check(
+      "the skip link is focusable as the first tab stop",
+      (await page.locator("a.skip-link:focus").count()) === 1,
+    );
+
+    // Off-screen but never hidden-with-visibility/display, so it stays in the
+    // tab order; focusing it slides it into view.
+    const skipVisibility = await page.evaluate<{ visible: boolean; transform: string }>(
+      "(() => { const el = document.activeElement; const s = el === null ? null : getComputedStyle(el);" +
+        " const rect = el === null ? null : el.getBoundingClientRect();" +
+        " return { visible: el !== null && s.visibility === 'visible' && s.display !== 'none' &&" +
+        " rect.top >= 0 && rect.left >= 0 && rect.bottom <= window.innerHeight," +
+        " transform: el === null ? 'none' : s.transform }; })()",
+    );
+    check(
+      "the skip link becomes visible when focused",
+      skipVisibility !== null && skipVisibility.visible,
+      JSON.stringify(skipVisibility),
+    );
+
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      "document.activeElement !== null && document.activeElement.tagName === 'MAIN'",
+    );
+    check(
+      "Enter on the skip link moves focus to the main content",
+      (await page.locator("main:focus").count()) === 1,
+    );
   });
 
   await step("Score cells expose provenance and a Score details panel (ticket 07)", async () => {
@@ -753,6 +887,290 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
         `${bestModel.name}: "${bestCell.linkText}" class="${bestCell.className}"`,
       );
     }
+  });
+
+  // --- Ticket 13: light and dark themes, keyboard, mobile ------------------
+
+  /** The applied explicit theme, set by the no-flash script / the toggle. */
+  const htmlTheme = (): Promise<string | undefined> =>
+    page.evaluate<string | undefined>("document.documentElement.dataset.theme");
+
+  /** The computed body background as an rgb() string. */
+  const bodyBackground = (): Promise<string> =>
+    page.evaluate<string>("getComputedStyle(document.body).backgroundColor");
+
+  /** True when the body background is a dark paint (all channels low). */
+  const bodyIsDark = async (): Promise<boolean> => {
+    const color = parseColor(await bodyBackground());
+    return color !== null && color.a > 0.9 && color.r < 80 && color.g < 80 && color.b < 80;
+  };
+
+  await step("the palette follows prefers-color-scheme when no choice is stored", async () => {
+    await page.evaluate("localStorage.removeItem('llm-bench-theme')");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    check("no stored choice leaves the theme implicit (no data-theme attribute)", (await htmlTheme()) === undefined);
+    check("a dark OS preference paints the dark palette", await bodyIsDark());
+
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.reload({ waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    check("a light OS preference paints the light palette", !(await bodyIsDark()));
+  });
+
+  await step("the theme toggle switches, announces its state, and persists", async () => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    const toggle = page.locator("button.theme-toggle");
+    check("the theme toggle renders once in the header", (await toggle.count()) === 1);
+    check(
+      "the toggle announces its state (aria-pressed, currently light)",
+      (await toggle.getAttribute("aria-pressed")) === "false",
+    );
+    check(
+      "the toggle's label names the current theme",
+      ((await toggle.textContent()) ?? "").includes("Light"),
+    );
+
+    // Keyboard operation: focus the toggle and activate it with Space.
+    await toggle.focus();
+    await page.keyboard.press("Space");
+    await page.waitForFunction("document.documentElement.dataset.theme === 'dark'");
+    check("Space on the focused toggle switches to the dark theme", (await htmlTheme()) === "dark");
+    check("the dark palette is applied", await bodyIsDark());
+    check(
+      "the toggle state and label update (pressed, Dark)",
+      (await toggle.getAttribute("aria-pressed")) === "true" &&
+        ((await toggle.textContent()) ?? "").includes("Dark"),
+    );
+    check(
+      "the choice persists in localStorage",
+      (await page.evaluate<string>("localStorage.getItem('llm-bench-theme')")) === "dark",
+    );
+
+    // An explicit choice wins over the OS preference.
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    // At DOMContentLoaded the no-flash script has already run (it is the
+    // first thing in <head>), so the stored theme is applied before any
+    // React code or paint of the app.
+    check("the stored theme is applied before the app boots (no flash)", (await htmlTheme()) === "dark");
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    check("the dark palette survives the reload", await bodyIsDark());
+    check("the toggle still reads pressed after the reload", (await toggle.getAttribute("aria-pressed")) === "true");
+
+    // Switch back with Enter; the light choice persists the same way.
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction("document.documentElement.dataset.theme === 'light'");
+    check("Enter on the toggle switches back to the light theme", (await htmlTheme()) === "light");
+    check(
+      "the light choice is stored too",
+      (await page.evaluate<string>("localStorage.getItem('llm-bench-theme')")) === "light",
+    );
+
+    // Leave the page clean for the remaining checks.
+    await page.evaluate("localStorage.removeItem('llm-bench-theme')");
+  });
+
+  await step("text and UI colours meet WCAG contrast in both themes", async () => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // One representative sample per recurring paint role, asserted in both
+    // themes: normal-size text needs 4.5:1; UI affordances (focus outline,
+    // input borders) need 3:1 (WCAG 2.2 AA).
+    const textSamples: readonly [label: string, selector: string][] = [
+      ["body intro text", "p.page-intro"],
+      ["table footer note", "p.table-note"],
+      ["Benchmark column link", "thead th a.column-link"],
+      ["Coverage count metadata", "td.average-cell .coverage-count"],
+      ["missing-Score marker", "tbody .missing"],
+      ["Under 50% Coverage badge", "tbody .coverage-badge"],
+      ["sort control label", "thead button.sort-button"],
+      ["Score details control", "tbody button.score-details-button"],
+    ];
+    const uiSamples: readonly [label: string, selector: string][] = [
+      ["number-input border", "input[type='number']"],
+    ];
+
+    const auditTheme = async (themeName: string): Promise<void> => {
+      for (const [label, selector] of textSamples) {
+        const sample = await page.evaluate<PaintSample | null>(paintSampleExpression(selector));
+        const ratio = sample === null ? 0 : contrastRatio(sample.color, sample.background);
+        check(
+          `${themeName} theme: ${label} meets 4.5:1 contrast`,
+          ratio >= 4.5,
+          sample === null ? `${selector} not found` : `${sample.color} on ${sample.background} = ${ratio.toFixed(2)}:1`,
+        );
+      }
+      for (const [label, selector] of uiSamples) {
+        const sample = await page.evaluate<PaintSample | null>(paintSampleExpression(selector));
+        const ratio = sample === null ? 0 : contrastRatio(sample.borderColor, sample.background);
+        check(
+          `${themeName} theme: ${label} meets 3:1 non-text contrast`,
+          ratio >= 3,
+          sample === null ? `${selector} not found` : `border ${sample.borderColor} on ${sample.background} = ${ratio.toFixed(2)}:1`,
+        );
+      }
+      // The focus indicator must be visible against the painted background
+      // of the focused control (3:1, WCAG 2.2 focus-appearance). A Tab press
+      // first establishes keyboard modality so :focus-visible applies to the
+      // programmatically focused control (mirroring a keyboard user).
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      const focusSample = await page.evaluate<PaintSample | null>(
+        "(() => { const el = document.activeElement; if (el === null || el === document.body) return null;" +
+          " let background = 'rgba(0, 0, 0, 0)';" +
+          " for (let node = el; node !== null; node = node.parentElement) {" +
+          "  const c = getComputedStyle(node).backgroundColor;" +
+          "  if (c !== 'rgba(0, 0, 0, 0)') { background = c; break; } }" +
+          " const s = getComputedStyle(el);" +
+          " return { color: s.color, background, outlineColor: s.outlineColor, outlineStyle: s.outlineStyle," +
+          "  outlineWidth: s.outlineWidth, borderColor: s.borderColor, text: el.textContent === null ? '' : el.textContent.slice(0, 40) }; })()",
+      );
+      const outlineRatio =
+        focusSample === null ? 0 : contrastRatio(focusSample.outlineColor, focusSample.background);
+      check(
+        `${themeName} theme: keyboard focus indicator is a visible outline (≥3:1, ≥2px)`,
+        focusSample !== null &&
+          focusSample.outlineStyle !== "none" &&
+          parseFloat(focusSample.outlineWidth) >= 2 &&
+          outlineRatio >= 3,
+        focusSample === null ? "nothing focused" : `${focusSample.outlineColor} ${focusSample.outlineWidth} on ${focusSample.background} = ${outlineRatio.toFixed(2)}:1`,
+      );
+    };
+
+    // Light theme: focus the search box (a main control) and audit.
+    await page.locator("input[type='search']").focus();
+    await auditTheme("light");
+
+    // Dark theme via the toggle, focus a sort control in the table header.
+    await page.locator("button.theme-toggle").click();
+    await page.waitForFunction("document.documentElement.dataset.theme === 'dark'");
+    await page.locator("thead button.sort-button").first().focus();
+    await auditTheme("dark");
+
+    // Back to the implicit light preference for the remaining checks.
+    await page.evaluate("localStorage.removeItem('llm-bench-theme')");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.reload({ waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+  });
+
+  await step("keyboard users reach and operate the main leaderboard controls (ticket 13)", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    /**
+     * Description of the currently focused element for tab-order checks:
+     * its index among the page's focusable elements (so two same-shaped
+     * controls never look identical) plus tag, type, and classes.
+     */
+    const focusedElement = (): Promise<string> =>
+      page.evaluate<string>(`(() => {
+        const el = document.activeElement;
+        if (el === null) return "none";
+        const focusables = Array.from(
+          document.querySelectorAll("a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])"),
+        );
+        const index = focusables.indexOf(el);
+        const label = el.getAttribute("aria-label") ?? "";
+        const id = el.id === "" ? "" : "#" + el.id;
+        const type =
+          el.tagName === "INPUT" && el.getAttribute("type") !== null
+            ? "[" + el.getAttribute("type") + "]"
+            : "";
+        const classes =
+          typeof el.className === "string" && el.className !== ""
+            ? "." + el.className.trim().split(/\\s+/).join(".")
+            : "";
+        return (
+          index + ": " + el.tagName.toLowerCase() + id + type + classes +
+          (label === "" ? "" : " [" + label + "]")
+        );
+      })()`);
+
+    /** Computed focus outline of the focused element. */
+    const focusedOutline = (): Promise<{ style: string; width: string } | null> =>
+      page.evaluate<{ style: string; width: string } | null>(
+        "(() => { const el = document.activeElement; if (el === null) return null;" +
+          " const s = getComputedStyle(el); return { style: s.outlineStyle, width: s.outlineWidth }; })()",
+      );
+
+    // The logical tab order: skip link → theme toggle → search → filters →
+    // Benchmark selection → the table controls.
+    await page.keyboard.press("Tab");
+    const stop1 = await focusedElement();
+    check("Tab 1 reaches the skip link", stop1.endsWith("a.skip-link"), stop1);
+
+    await page.keyboard.press("Tab");
+    const stop2 = await focusedElement();
+    check("Tab 2 reaches the theme toggle", stop2.endsWith("button.theme-toggle"), stop2);
+
+    await page.keyboard.press("Tab");
+    const stop3 = await focusedElement();
+    check("Tab 3 reaches the search control", stop3.endsWith("input[search]"), stop3);
+    const outline = await focusedOutline();
+    check(
+      "the focused search control paints a visible focus outline",
+      outline !== null && outline.style !== "none" && parseFloat(outline.width) >= 2,
+      JSON.stringify(outline),
+    );
+
+    // Skip-link activation, then continue from the top of the content.
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      "document.activeElement !== null && document.activeElement.tagName === 'MAIN'",
+    );
+    check("the skip link works on the leaderboard too", (await page.locator("main:focus").count()) === 1);
+
+    // Tabbing from the top always moves forward: a keyboard trap would keep
+    // landing on the same element. 40 consecutive Tabs must visit 40
+    // distinct elements (the page has far more focusable controls than
+    // that: filters, Benchmark selection, every column header, and every
+    // Score cell anchor and details control).
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const stops: string[] = [];
+    for (let index = 0; index < 40; index++) {
+      await page.keyboard.press("Tab");
+      stops.push(await focusedElement());
+    }
+    const distinctStops = new Set(stops).size;
+    check(
+      "no keyboard trap: 40 consecutive Tabs visit 40 distinct controls",
+      distinctStops === 40,
+      `${distinctStops} distinct stops; first repeat: ${
+        stops.find((value, index) => stops.indexOf(value) !== index) ?? "none"
+      }`,
+    );
+
+    // Every keyboard stop paints a visible focus outline (the whole walk
+    // stayed in keyboard modality).
+    const missingOutlines: string[] = [];
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    for (let index = 0; index < 15; index++) {
+      await page.keyboard.press("Tab");
+      const sample = await focusedOutline();
+      if (sample === null || sample.style === "none" || parseFloat(sample.width) < 2) {
+        missingOutlines.push(`${await focusedElement()}: ${JSON.stringify(sample)}`);
+      }
+    }
+    check(
+      "each of the first 15 keyboard stops paints a visible focus outline",
+      missingOutlines.length === 0,
+      missingOutlines.join(" | "),
+    );
   });
 }
 
