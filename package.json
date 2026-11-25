@@ -11,6 +11,8 @@
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "validate": "pnpm --filter tools validate",
+    "data:manage": "pnpm --filter tools manage",
+    "data:import": "pnpm --filter tools run import",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test"
   }
