@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "validate": "tsx src/validate-data.ts",
+    "manage": "tsx src/manage-data.ts",
+    "import": "tsx src/import-scores.ts",
     "lint": "eslint . && tsc --noEmit",
     "test": "vitest run"
   },

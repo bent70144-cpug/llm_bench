@@ -53,9 +53,12 @@ export type BenchmarkTier = z.infer<typeof BenchmarkTierSchema>;
  * null (null means "self-hosted / no public API rate"). The Reference
  * inference provider is non-null only when a third party supplies the rate,
  * and must be null whenever the prices are null.
+ *
+ * Records are strict objects: unknown fields are rejected so typo'd keys
+ * (e.g. "licence") can never reach a data file.
  */
 export const ModelSchema = z
-  .object({
+  .strictObject({
     id: kebabId,
     name: z.string().min(1),
     provider: z.string().min(1),
@@ -81,7 +84,7 @@ export const ModelSchema = z
 export type Model = z.infer<typeof ModelSchema>;
 
 /** One entry of a Benchmark's ordered Canonical sources list. */
-export const CanonicalSourceSchema = z.object({
+export const CanonicalSourceSchema = z.strictObject({
   sourceType: SourceTypeSchema,
   urlPatterns: z.array(z.string().min(1)).optional(),
 });
@@ -93,7 +96,7 @@ export type CanonicalSource = z.infer<typeof CanonicalSourceSchema>;
  * it); the field exists so a future lower-is-better Benchmark is an explicit
  * schema and scoring change.
  */
-export const BenchmarkSchema = z.object({
+export const BenchmarkSchema = z.strictObject({
   id: kebabId,
   name: z.string().min(1),
   category: BenchmarkCategorySchema,
@@ -115,7 +118,7 @@ export type Benchmark = z.infer<typeof BenchmarkSchema>;
  * when we fetched it, so publishedDate must not be after retrievedDate.
  */
 export const ScoreSchema = z
-  .object({
+  .strictObject({
     modelId: kebabId,
     benchmarkId: kebabId,
     value: z.number().min(0).max(100),
@@ -134,7 +137,7 @@ export const ScoreSchema = z
 export type Score = z.infer<typeof ScoreSchema>;
 
 /** One controlled Evaluation setting in the data-owned vocabulary. */
-export const EvaluationSettingSchema = z.object({
+export const EvaluationSettingSchema = z.strictObject({
   name: z.string().min(1),
   description: z.string().min(1),
 });
@@ -144,7 +147,7 @@ export type EvaluationSetting = z.infer<typeof EvaluationSettingSchema>;
  * Blended-price configuration, stored as data: a 3:1 input-to-output ratio.
  * The divisor is derived from the weight sum (3 + 1 = 4), never stored.
  */
-export const PricingConfigSchema = z.object({
+export const PricingConfigSchema = z.strictObject({
   inputWeight: z.number().positive(),
   outputWeight: z.number().positive(),
 });

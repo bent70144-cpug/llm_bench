@@ -1,10 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { createRequire } from "node:module";
+import { rmSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
+import {
+  cleanupTempDirs,
+  firstBenchmark,
+  firstModel,
+  firstScore,
+  runValidate,
+  validFixture,
+  writeFixture,
+} from "./cli-test-utils";
 
 /**
  * Seam 2: the validate-data CLI is invoked as a process against temporary
@@ -13,122 +18,7 @@ import { afterAll, describe, expect, it } from "vitest";
  * package never contains placeholder data.
  */
 
-const require = createRequire(import.meta.url);
-const tsxCli = path.join(path.dirname(require.resolve("tsx/package.json")), "dist/cli.mjs");
-const validateCli = fileURLToPath(new URL("./validate-data.ts", import.meta.url));
-
-const tempDirs: string[] = [];
-
-interface RunResult {
-  status: number | null;
-  output: string;
-}
-
-function runValidate(dataDir: string): RunResult {
-  const result = spawnSync(process.execPath, [tsxCli, validateCli, "--data-dir", dataDir], {
-    encoding: "utf8",
-  });
-  return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
-}
-
-type DataFiles = {
-  "models.json": unknown;
-  "benchmarks.json": unknown;
-  "scores.json": unknown;
-  "evaluation-settings.json": unknown;
-  "pricing-config.json": unknown;
-};
-
-function validFixture(): DataFiles {
-  return {
-    "models.json": [
-      {
-        id: "model-a",
-        name: "Model A",
-        provider: "Provider A",
-        license: "proprietary",
-        releaseDate: "2026-01-05",
-        contextWindow: 128000,
-        inputPricePer1M: 1.5,
-        outputPricePer1M: 3.0,
-        referenceInferenceProvider: null,
-        lastUpdated: "2026-02-01",
-        sourceUrl: "https://example.com/model-a",
-      },
-    ],
-    "benchmarks.json": [
-      {
-        id: "bench-1",
-        name: "Bench 1",
-        category: "reasoning",
-        description: "A graduate-level reasoning Benchmark.",
-        metric: "Accuracy (percent correct)",
-        higherIsBetter: true,
-        tier: "core",
-        sourceUrl: "https://example.com/bench-1",
-        canonicalSources: [{ sourceType: "provider" }, { sourceType: "paper" }],
-        limitations: "Small evaluation set.",
-        evaluationSettingNotes: "Providers self-report under varied settings.",
-      },
-    ],
-    "scores.json": [
-      {
-        modelId: "model-a",
-        benchmarkId: "bench-1",
-        value: 75,
-        evaluationSetting: "5-shot",
-        sourceType: "provider",
-        sourceUrl: "https://example.com/model-a",
-        publishedDate: "2026-01-10",
-        retrievedDate: "2026-02-01",
-        verified: true,
-        isPrimary: true,
-      },
-    ],
-    "evaluation-settings.json": [{ name: "5-shot", description: "Five-shot prompting." }],
-    "pricing-config.json": { inputWeight: 3, outputWeight: 1 },
-  };
-}
-
-function writeFixture(overrides: Partial<DataFiles> = {}): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "llm-bench-validate-"));
-  tempDirs.push(dir);
-  const fixture = { ...validFixture(), ...overrides };
-  for (const [fileName, content] of Object.entries(fixture)) {
-    writeFileSync(path.join(dir, fileName), `${JSON.stringify(content, null, 2)}\n`);
-  }
-  return dir;
-}
-
-function firstScore(fixture: DataFiles): Record<string, unknown> {
-  const first = (fixture["scores.json"] as Array<Record<string, unknown>>)[0];
-  if (!first) {
-    throw new Error("fixture has no Score");
-  }
-  return first;
-}
-
-function firstModel(fixture: DataFiles): Record<string, unknown> {
-  const first = (fixture["models.json"] as Array<Record<string, unknown>>)[0];
-  if (!first) {
-    throw new Error("fixture has no Model");
-  }
-  return first;
-}
-
-function firstBenchmark(fixture: DataFiles): Record<string, unknown> {
-  const first = (fixture["benchmarks.json"] as Array<Record<string, unknown>>)[0];
-  if (!first) {
-    throw new Error("fixture has no Benchmark");
-  }
-  return first;
-}
-
-afterAll(() => {
-  for (const dir of tempDirs) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+afterAll(cleanupTempDirs);
 
 describe("validate-data CLI", () => {
   it("exits 0 on valid data", () => {
@@ -164,7 +54,30 @@ describe("validate-data CLI", () => {
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
     expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
     expect(result.output).toContain("value");
+  });
+
+  it("exits non-zero and names the Score when publishedDate is missing", () => {
+    const fixture = validFixture();
+    delete firstScore(fixture).publishedDate;
+
+    const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("publishedDate");
+  });
+
+  it("exits non-zero and names the Score when retrievedDate is missing", () => {
+    const fixture = validFixture();
+    delete firstScore(fixture).retrievedDate;
+
+    const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("retrievedDate");
   });
 
   it("exits non-zero when publishedDate is after retrievedDate", () => {
@@ -208,6 +121,17 @@ describe("validate-data CLI", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("license");
+  });
+
+  it("exits non-zero and names the record when a Model has an unknown field", () => {
+    const fixture = validFixture();
+    firstModel(fixture).licenceName = "Model A License";
+
+    const result = runValidate(writeFixture({ "models.json": fixture["models.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a");
+    expect(result.output).toContain("licenceName");
   });
 
   it("exits non-zero when an Evaluation setting is not in the vocabulary", () => {
@@ -300,5 +224,75 @@ describe("validate-data CLI", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Canonical sources");
+  });
+
+  it("exits non-zero when a Primary score's source URL matches no Canonical sources urlPattern", () => {
+    const fixture = validFixture();
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "provider", urlPatterns: ["^https://cards\\.example\\.com/"] },
+    ];
+    firstScore(fixture).sourceUrl = "https://elsewhere.example.com/model-a";
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("urlPattern");
+  });
+
+  it("accepts a full-featured valid dataset (optional Model fields, third-party rate, urlPatterns, alternate Evaluation settings)", () => {
+    const fixture = validFixture();
+    const model = firstModel(fixture);
+    model.licenseName = "Model A Community License";
+    model.notes = "Optional notes.";
+    const models = fixture["models.json"] as Array<Record<string, unknown>>;
+    models.push({
+      id: "model-b",
+      name: "Model B",
+      provider: "Provider B",
+      license: "open-source",
+      licenseName: "MIT",
+      releaseDate: "2026-01-05",
+      contextWindow: 64000,
+      inputPricePer1M: 0.5,
+      outputPricePer1M: 1.5,
+      referenceInferenceProvider: "Third Party Host",
+      lastUpdated: "2026-02-01",
+      sourceUrl: "https://example.com/model-b",
+      notes: "Rate recorded from a Reference inference provider.",
+    });
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "provider", urlPatterns: ["^https://cards\\.example\\.com/"] },
+      { sourceType: "leaderboard" },
+    ];
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // Primary score from a provider card matching the urlPattern.
+    firstScore(fixture).sourceUrl = "https://cards.example.com/model-a";
+    // Alternate Evaluation setting: non-primary, so Canonical sources do not apply.
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 60,
+      sourceType: "third-party",
+      sourceUrl: "https://blog.example.com/model-a-review",
+      isPrimary: false,
+    });
+    // A second Model's Primary score from an eligible leaderboard source without urlPatterns.
+    scores.push({
+      ...firstScore(fixture),
+      modelId: "model-b",
+      evaluationSetting: "5-shot",
+      value: 70,
+      sourceType: "leaderboard",
+      sourceUrl: "https://board.example.com/rankings",
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(0);
   });
 });
