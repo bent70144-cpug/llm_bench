@@ -123,6 +123,17 @@ describe("validate-data CLI", () => {
     expect(result.output).toContain("license");
   });
 
+  it("exits non-zero and names the record when a Model has an unknown field", () => {
+    const fixture = validFixture();
+    firstModel(fixture).licenceName = "Model A License";
+
+    const result = runValidate(writeFixture({ "models.json": fixture["models.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a");
+    expect(result.output).toContain("licenceName");
+  });
+
   it("exits non-zero when an Evaluation setting is not in the vocabulary", () => {
     const fixture = validFixture();
     firstScore(fixture).evaluationSetting = "42-shot";

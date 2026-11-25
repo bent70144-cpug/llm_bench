@@ -51,6 +51,14 @@ export type DataFiles = {
 
 export type DataFileName = keyof DataFiles;
 
+export const DATA_FILE_NAMES: readonly DataFileName[] = [
+  "models.json",
+  "benchmarks.json",
+  "scores.json",
+  "evaluation-settings.json",
+  "pricing-config.json",
+];
+
 export function validFixture(): DataFiles {
   return {
     "models.json": [
