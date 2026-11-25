@@ -267,8 +267,10 @@ describe("sortModelsByColumn", () => {
     expect(asc.map((model) => model.id)).toEqual(["model-a", "model-b", "model-c", "model-d"]);
   });
 
-  it("sorts by Average with null Averages last and stable ties", () => {
-    // Averages: model-a (80+90)/2 = 85, model-b 90, model-c 85, model-d null.
+  it("sorts by Average with null Averages last, ties broken by higher Coverage", () => {
+    // Averages: model-a (80+90)/2 = 85 Coverage 2, model-b 90 Coverage 1,
+    // model-c 85 Coverage 1, model-d null. The 85 tie breaks to model-a
+    // (higher Coverage), not to data-package order.
     const desc = sortModelsByColumn(sortableModels, { column: "average", direction: "desc" }, context);
     expect(desc.map((model) => model.id)).toEqual(["model-b", "model-a", "model-c", "model-d"]);
 
@@ -287,6 +289,103 @@ describe("sortModelsByColumn", () => {
 
     const byLicense = sortModelsByColumn(sortableModels, { column: "license", direction: "asc" }, context);
     expect(byLicense.map((model) => model.id)).toEqual(["model-c", "model-a", "model-b", "model-d"]);
+  });
+});
+
+describe("sortModelsByColumn ranking tie-breaks", () => {
+  /**
+   * Hand-computed tie-break fixtures. Selection: bench-1, bench-2.
+   *
+   * - model-high   "High Model"  bench-1 90          → Average 90, Coverage 1
+   * - model-pair-a "Pair A"      bench-1 80, bench-2 80 → Average 80, Coverage 2
+   * - model-pair-b "Zebra Pair"  bench-1 80, bench-2 80 → Average 80, Coverage 2
+   * - model-solo   "Solo Model"  bench-1 80          → Average 80, Coverage 1
+   * - model-none   "None Model"  no Scores           → null Average
+   *
+   * Data order deliberately puts Zebra Pair before Pair A and Solo Model
+   * before High Model, so a stable-data-order sort and the deterministic
+   * ranking chain produce DIFFERENT orders on ties.
+   */
+  const tieModels: Model[] = [
+    makeModel({ id: "model-pair-b", name: "Zebra Pair" }),
+    makeModel({ id: "model-solo", name: "Solo Model" }),
+    makeModel({ id: "model-high", name: "High Model" }),
+    makeModel({ id: "model-pair-a", name: "Pair A" }),
+    makeModel({ id: "model-none", name: "None Model" }),
+  ];
+
+  const tieScores: Score[] = [
+    makeScore({ modelId: "model-high", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-pair-a", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-pair-a", benchmarkId: "bench-2", value: 80 }),
+    makeScore({ modelId: "model-pair-b", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-pair-b", benchmarkId: "bench-2", value: 80 }),
+    makeScore({ modelId: "model-solo", benchmarkId: "bench-1", value: 80 }),
+  ];
+
+  const tieContext = { scores: tieScores, benchmarkIds: ["bench-1", "bench-2"] };
+
+  it("sorting the Average column descending is exactly the ranking", () => {
+    const sorted = sortModelsByColumn(tieModels, { column: "average", direction: "desc" }, tieContext);
+
+    expect(sorted.map((model) => model.id)).toEqual([
+      "model-high", // Average 90
+      "model-pair-a", // Average 80, Coverage 2, "Pair A"
+      "model-pair-b", // Average 80, Coverage 2, "Zebra Pair" — name, not data order
+      "model-solo", // Average 80, Coverage 1
+      "model-none", // null Average
+    ]);
+    expect(sorted.map((model) => model.id)).toEqual(
+      rankModelsByAverage(tieModels, tieContext).map((model) => model.id),
+    );
+  });
+
+  it("sorting the Average column ascending still breaks ties by the chain and keeps nulls last", () => {
+    const asc = sortModelsByColumn(tieModels, { column: "average", direction: "asc" }, tieContext);
+
+    expect(asc.map((model) => model.id)).toEqual([
+      "model-pair-a", // Average 80, Coverage 2, "Pair A"
+      "model-pair-b", // Average 80, Coverage 2, "Zebra Pair"
+      "model-solo", // Average 80, Coverage 1
+      "model-high", // Average 90
+      "model-none", // null Average — last even when ascending
+    ]);
+  });
+
+  it("breaks Benchmark-column ties by higher Coverage then name, with missing Scores last in both directions", () => {
+    const desc = sortModelsByColumn(tieModels, { column: "bench-1", direction: "desc" }, tieContext);
+    expect(desc.map((model) => model.id)).toEqual([
+      "model-high", // 90
+      "model-pair-a", // 80, Coverage 2, "Pair A"
+      "model-pair-b", // 80, Coverage 2, "Zebra Pair"
+      "model-solo", // 80, Coverage 1
+      "model-none", // missing — last, never zero
+    ]);
+
+    const asc = sortModelsByColumn(tieModels, { column: "bench-1", direction: "asc" }, tieContext);
+    // The 80 tie keeps the same deterministic order in both directions.
+    expect(asc.map((model) => model.id)).toEqual([
+      "model-pair-a",
+      "model-pair-b",
+      "model-solo",
+      "model-high", // 90
+      "model-none", // missing — last in both directions
+    ]);
+  });
+
+  it("keeps stable data-package-order ties on Model-field columns", () => {
+    // Coverage values: pair-b 2, solo 1, high 1, pair-a 2, none 0. The ties
+    // keep data-package order (Zebra Pair before Pair A, Solo Model before
+    // High Model) — the ranking chain applies only to the Average column
+    // and Benchmark columns.
+    const desc = sortModelsByColumn(tieModels, { column: "coverage", direction: "desc" }, tieContext);
+    expect(desc.map((model) => model.id)).toEqual([
+      "model-pair-b",
+      "model-pair-a",
+      "model-solo",
+      "model-high",
+      "model-none",
+    ]);
   });
 });
 
@@ -422,6 +521,117 @@ describe("isUnderHalfCoverage", () => {
 
   it("is false when no Benchmark is selected — there is no Coverage to be under", () => {
     expect(isUnderHalfCoverage({ average: null, coverage: 0, selected: 0 })).toBe(false);
+  });
+});
+
+describe("leaderboard pipeline composition (filter, then rank or sort)", () => {
+  /**
+   * Hand-computed composition fixtures. Selection: bench-1, bench-2, bench-3.
+   *
+   * - model-aa "AA Model" Zed AI, open-weights, 100k ctx, $2/$4 — bench-1 70, bench-2 90 → Average 80, Coverage 2
+   * - model-bb "BB Model" Zed AI, proprietary, 400k ctx, $1/$2 — bench-1 90 → Average 90, Coverage 1
+   * - model-cc "CC Model" Acme, open-weights, 200k ctx, self-hosted — bench-1 80, bench-2 70, bench-3 90 → Average 80, Coverage 3
+   * - model-dd "DD Model" Acme, proprietary, 128k ctx, $1.5/$3 — no Scores → null Average
+   */
+  const pipelineModels: Model[] = [
+    makeModel({
+      id: "model-aa",
+      name: "AA Model",
+      provider: "Zed AI",
+      license: "open-weights",
+      contextWindow: 100000,
+      inputPricePer1M: 2.0,
+      outputPricePer1M: 4.0,
+    }),
+    makeModel({
+      id: "model-bb",
+      name: "BB Model",
+      provider: "Zed AI",
+      license: "proprietary",
+      contextWindow: 400000,
+      inputPricePer1M: 1.0,
+      outputPricePer1M: 2.0,
+    }),
+    makeModel({
+      id: "model-cc",
+      name: "CC Model",
+      provider: "Acme",
+      license: "open-weights",
+      contextWindow: 200000,
+      inputPricePer1M: null,
+      outputPricePer1M: null,
+    }),
+    makeModel({
+      id: "model-dd",
+      name: "DD Model",
+      provider: "Acme",
+      license: "proprietary",
+      contextWindow: 128000,
+      inputPricePer1M: 1.5,
+      outputPricePer1M: 3.0,
+    }),
+  ];
+
+  const pipelineScores: Score[] = [
+    makeScore({ modelId: "model-aa", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-aa", benchmarkId: "bench-2", value: 90 }),
+    makeScore({ modelId: "model-bb", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-cc", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-cc", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-cc", benchmarkId: "bench-3", value: 90 }),
+  ];
+
+  const pipelineContext = {
+    scores: pipelineScores,
+    benchmarkIds: ["bench-1", "bench-2", "bench-3"],
+  };
+
+  it("applies search, License, and Context window filters together before ranking", () => {
+    // Search "model" matches every name; the License filter keeps both
+    // categories; the Context window floor of 150000 drops AA (100k) and
+    // DD (128k) — so the ranked pipeline shows exactly BB then CC.
+    const shortlist = filterModels(pipelineModels, {
+      search: "MODEL",
+      licenses: ["open-weights", "proprietary"],
+      minContextWindow: 150000,
+    });
+    expect(shortlist.map((model) => model.id)).toEqual(["model-bb", "model-cc"]);
+
+    expect(rankModelsByAverage(shortlist, pipelineContext).map((model) => model.id)).toEqual([
+      "model-bb", // Average 90
+      "model-cc", // Average 80
+    ]);
+
+    // Without the filters the ranking carries all four Models, in rank order.
+    expect(rankModelsByAverage(pipelineModels, pipelineContext).map((model) => model.id)).toEqual([
+      "model-bb", // Average 90
+      "model-cc", // Average 80, Coverage 3
+      "model-aa", // Average 80, Coverage 2
+      "model-dd", // null Average
+    ]);
+  });
+
+  it("sorts the filtered shortlist by any column, with the ranking tie-breaks", () => {
+    const shortlist = filterModels(pipelineModels, {
+      search: "model",
+      minContextWindow: 150000,
+    });
+
+    // Sorting the shortlist by a Benchmark column: CC's 70 on bench-2 beats
+    // BB's missing Score, which still sorts last — never as zero.
+    const byBenchmark = sortModelsByColumn(
+      shortlist,
+      { column: "bench-2", direction: "desc" },
+      pipelineContext,
+    );
+    expect(byBenchmark.map((model) => model.id)).toEqual(["model-cc", "model-bb"]);
+
+    const byPrice = sortModelsByColumn(
+      shortlist,
+      { column: "input-price", direction: "asc" },
+      pipelineContext,
+    );
+    expect(byPrice.map((model) => model.id)).toEqual(["model-bb", "model-cc"]);
   });
 });
 

@@ -226,6 +226,26 @@ function compareModelNames(left: Model, right: Model): number {
 /** The sortable value of one column for one Model; null means missing. */
 type ColumnValue = string | number | null;
 
+/** The fixed Model-field columns a header can sort by. */
+const MODEL_COLUMN_IDS: ReadonlySet<string> = new Set<string>([
+  "model-name",
+  "provider",
+  "license",
+  "context-window",
+  "input-price",
+  "output-price",
+  "average",
+  "coverage",
+]);
+
+/**
+ * Whether a column's values come from Scores (the Average or a Benchmark's
+ * Primary score) — the columns whose ties break by the ranking chain.
+ */
+function isScoreColumn(column: SortColumn): boolean {
+  return column === "average" || !MODEL_COLUMN_IDS.has(column);
+}
+
 function columnValueFor(model: Model, column: SortColumn, context: LeaderboardContext): ColumnValue {
   switch (column) {
     case "model-name":
@@ -272,8 +292,13 @@ function compareColumnValues(a: ColumnValue, b: ColumnValue, direction: SortDire
 
 /**
  * Sorts the Models by any leaderboard column — a Model field column or a
- * Benchmark column (by its Primary scores). Ties keep the data-package
- * order (stable), and missing values always sort last in both directions.
+ * Benchmark column (by its Primary scores). Missing values always sort
+ * last in both directions — "n/a" is never treated as zero.
+ *
+ * Ties on the Average column and on Benchmark columns break by the ranking
+ * chain (higher Coverage, then Model name ascending), in both directions,
+ * so those orders are deterministic; ties on Model-field columns keep the
+ * data-package order (stable).
  */
 export function sortModelsByColumn(
   models: readonly Model[],
@@ -284,13 +309,33 @@ export function sortModelsByColumn(
   for (const model of models) {
     values.set(model.id, columnValueFor(model, sort.column, context));
   }
-  return [...models].sort((left, right) =>
-    compareColumnValues(
+  const averageResults = isScoreColumn(sort.column)
+    ? averageResultsFor(models, context)
+    : null;
+  return [...models].sort((left, right) => {
+    const comparison = compareColumnValues(
       values.get(left.id) ?? null,
       values.get(right.id) ?? null,
       sort.direction,
-    ),
-  );
+    );
+    if (comparison !== 0 || averageResults === null) return comparison;
+    return compareForRanking(left, right, averageResults);
+  });
+}
+
+/** The Average and Coverage of every Model over the selection, for tie-breaks. */
+function averageResultsFor(
+  models: readonly Model[],
+  context: LeaderboardContext,
+): ReadonlyMap<string, AverageResult> {
+  const results = new Map<string, AverageResult>();
+  for (const model of models) {
+    results.set(
+      model.id,
+      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
+    );
+  }
+  return results;
 }
 
 /** Search and filter criteria for the Model list. Empty fields match all. */
