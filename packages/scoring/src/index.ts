@@ -995,3 +995,47 @@ export function viewExportToCsv(view: ViewExport): string {
 
   return `${lines.join("\r\n")}\r\n`;
 }
+
+/** Everything the full-dataset export needs: the raw data package plus a timestamp. */
+export interface FullDatasetExportInput {
+  models: readonly Model[];
+  benchmarks: readonly Benchmark[];
+  /** All Scores, including non-Primary alternate Evaluation settings. */
+  scores: readonly Score[];
+  /** ISO 8601 timestamp recorded in the export. */
+  exportedAt: string;
+}
+
+/** The full raw dataset as one self-describing JSON document. */
+export interface FullDatasetExport {
+  kind: "llm-bench-dataset";
+  formatVersion: 1;
+  exportedAt: string;
+  /** The raw models.json content, verbatim and in data-package order. */
+  models: readonly Model[];
+  /** The raw benchmarks.json content, verbatim and in data-package order. */
+  benchmarks: readonly Benchmark[];
+  /**
+   * The raw scores.json content, verbatim and in data-package order: every
+   * Score, including the non-Primary Scores recorded under alternate
+   * Evaluation settings.
+   */
+  scores: readonly Score[];
+}
+
+/**
+ * Builds the full-dataset export: the raw Models, Benchmarks, and ALL Scores
+ * — including non-Primary alternate Evaluation settings — as one JSON
+ * document, independent of any view state, so alternate settings can be
+ * audited outside the app.
+ */
+export function buildFullDatasetExport(input: FullDatasetExportInput): FullDatasetExport {
+  return {
+    kind: "llm-bench-dataset",
+    formatVersion: 1,
+    exportedAt: input.exportedAt,
+    models: input.models,
+    benchmarks: input.benchmarks,
+    scores: input.scores,
+  };
+}

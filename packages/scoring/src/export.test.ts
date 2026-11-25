@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
 
 import {
+  buildFullDatasetExport,
   buildViewExport,
   viewExportToCsv,
   type LeaderboardUrlState,
@@ -377,5 +378,47 @@ describe("viewExportToCsv", () => {
 
     expect(view.metadata.aggregate).toBe("Average");
     expect(view.rows[0]!.average).toBe(85);
+  });
+});
+
+describe("buildFullDatasetExport", () => {
+  it("exports the raw Models, Benchmarks, and every Score — including non-Primary alternate Evaluation settings", () => {
+    const models = [makeModel(), makeModel({ id: "model-b", name: "Model B" })];
+    const benchmarks = [
+      makeBenchmark(),
+      makeBenchmark({ id: "bench-2", name: "Bench 2" }),
+    ];
+    const scores: Score[] = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+      // Alternate Evaluation setting for the same pair: excluded from every
+      // Average and view export, but the dataset export must carry it.
+      makeScore({
+        modelId: "model-a",
+        benchmarkId: "bench-1",
+        value: 70,
+        evaluationSetting: "0-shot",
+        isPrimary: false,
+      }),
+      makeScore({ modelId: "model-b", benchmarkId: "bench-2", value: 60 }),
+    ];
+
+    const exported = buildFullDatasetExport({
+      models,
+      benchmarks,
+      scores,
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    expect(exported).toEqual({
+      kind: "llm-bench-dataset",
+      formatVersion: 1,
+      exportedAt: "2026-11-26T10:30:00.000Z",
+      models,
+      benchmarks,
+      scores,
+    });
+    expect(exported.scores).toContainEqual(
+      expect.objectContaining({ isPrimary: false, evaluationSetting: "0-shot", value: 70 }),
+    );
   });
 });
