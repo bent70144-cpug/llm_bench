@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -27,9 +27,22 @@ import { benchmarkPath, resolveRoute } from "../../apps/web/src/routes";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DATA_DIR = path.join(REPO_ROOT, "packages/data");
+const DIST_ASSETS = path.join(REPO_ROOT, "apps/web/dist/assets");
 
 function readCatalogue(): Benchmark[] {
   return JSON.parse(readFileSync(path.join(DATA_DIR, "benchmarks.json"), "utf8")) as Benchmark[];
+}
+
+function readBuiltBundle(): string {
+  const files = readdirSync(DIST_ASSETS);
+  return files
+    .map((file) => readFileSync(path.join(DIST_ASSETS, file), "utf8"))
+    .join("\n");
+}
+
+function runBuild(): { status: number | null; output: string } {
+  const result = spawnSync("pnpm", ["build"], { cwd: REPO_ROOT, encoding: "utf8" });
+  return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
 }
 
 /**
@@ -81,5 +94,54 @@ describe("Benchmark detail pages (ticket 08)", () => {
     expect(resolveRoute("/benchmarks/mmlu-pro/extra")).toEqual({ page: "not-found" });
     expect(resolveRoute("")).toEqual({ page: "not-found" });
     expect(resolveRoute("/anything-else")).toEqual({ page: "not-found" });
+  });
+
+  it(
+    "renders every Benchmark detail page from the data package in the built bundle",
+    () => {
+      const catalogue = readCatalogue();
+      const build = runBuild();
+      expect(build.status).toBe(0);
+
+      const bundle = readBuiltBundle();
+
+      // The route wiring ships: Benchmark page paths are built from the
+      // "/benchmarks/" prefix, and the page furniture (back link, the two
+      // not-found variants, the provenance section) is wired in.
+      expect(bundle).toContain("/benchmarks/");
+      expect(bundle).toContain("Back to leaderboard");
+      expect(bundle).toContain("Benchmark not found");
+      expect(bundle).toContain("Page not found");
+      expect(bundle).toContain("Canonical sources");
+
+      // The detail page content is 100% data-driven: every Benchmark's
+      // description, limitations (saturation and contamination notes),
+      // evaluationSettingNotes, and source link ship via the data package —
+      // nothing per-Benchmark is hardcoded in the web app. Links are built
+      // at runtime as the "/benchmarks/" prefix plus the id, so each id in
+      // the bundle is what makes the Benchmark's page reachable.
+      for (const benchmark of catalogue) {
+        expect(bundle).toContain(jsonEscaped(benchmark.description));
+        expect(bundle).toContain(jsonEscaped(benchmark.limitations));
+        expect(bundle).toContain(jsonEscaped(benchmark.evaluationSettingNotes));
+        expect(bundle).toContain(benchmark.sourceUrl);
+        expect(bundle).toContain(jsonEscaped(benchmark.id));
+      }
+    },
+    480_000,
+  );
+
+  it("keeps the catch-all SPA rewrite that serves direct links in production", () => {
+    // ADR-0003: static hosting relies on vercel.json rewriting every path
+    // that matches no file to index.html, so direct navigation and refresh
+    // on /benchmarks/<id> reach the client-side router. Ticket 01 laid this
+    // down; ticket 08 relies on it, so pin it.
+    const vercel = JSON.parse(readFileSync(path.join(REPO_ROOT, "vercel.json"), "utf8")) as {
+      rewrites?: Array<{ source: string; destination: string }>;
+    };
+    expect(vercel.rewrites).toContainEqual({
+      source: "/(.*)",
+      destination: "/index.html",
+    });
   });
 });
