@@ -1,7 +1,7 @@
 [
   {
     "name": "Max reasoning effort (temperature 1.0, top-p 0.95)",
-    "description": "Results produced with reasoning effort set to max, temperature 1.0, and top-p 0.95, as stated in the Kimi K3.1 Pro model card."
+    "description": "Results produced with reasoning effort set to its maximum, temperature 1.0, and top-p 0.95. Used by the Kimi K3.1 Pro card ('max' reasoning effort) and the DeepSeek-V4.1-Flash card (reasoning_effort=100, the maximum on DeepSeek's effort scale)."
   },
   {
     "name": "0-shot",
@@ -44,8 +44,28 @@
     "description": "Single-attempt functional correctness where the shot count is undefined by the source (agentic scaffold runs). Used for SWE-bench Verified."
   },
   {
+    "name": "pass@1 (mini-SWE-agent)",
+    "description": "Single-attempt functional correctness on the official swebench.com Verified leaderboard's mini-SWE-agent harness, as opposed to provider self-reported custom scaffolds. Used for SWE-bench Verified leaderboard rows."
+  },
+  {
+    "name": "pass@1 (no thinking)",
+    "description": "SWE-bench Verified provider-scaffold run with extended thinking disabled (Claude Opus 4.5 system card Table 2.4.A 'no thinking', 200K context, averaged over 5 trials)."
+  },
+  {
+    "name": "pass@1 (with thinking)",
+    "description": "SWE-bench Verified provider-scaffold run with extended thinking enabled (Claude Opus 4.5 system card Table 2.4.A 64k thinking budget, averaged over 5 trials)."
+  },
+  {
     "name": "pass^1",
     "description": "First-attempt task success (official tau2-bench notation, verified on taubench.com). Used for tau2-bench."
+  },
+  {
+    "name": "pass^1 (Retail domain)",
+    "description": "First-attempt task success on the τ²-bench Retail domain, provider self-reported. The domain is recorded in the Evaluation setting because the Score schema has no separate domain field; Retail is τ²-bench's original domain."
+  },
+  {
+    "name": "pass^1 (Telecom domain)",
+    "description": "First-attempt task success on the τ²-bench Telecom domain, provider self-reported. The domain is recorded in the Evaluation setting because the Score schema has no separate domain field."
   },
   {
     "name": "with thinking",
@@ -58,5 +78,89 @@
   {
     "name": "128k context",
     "description": "Long-context evaluation at 128K tokens. Used for RULER. Other lengths (4k/8k/16k/32k/64k context) are added by data PR when a Score needs them."
+  },
+  {
+    "name": "unspecified by source",
+    "description": "The provider publishes the number in a benchmark table with no shot count, thinking-mode label, or other prompting/decode condition stated. Used for GLM-4.7 (MMLU-Pro 84.3, GPQA Diamond 85.7) and Qwen3.6-27B (MMLU-Pro 86.2, GPQA Diamond 87.8) card-table scores; must not be silently compared with labeled settings."
+  },
+  {
+    "name": "unspecified by source (thinking mode default)",
+    "description": "The provider's card publishes the score with no shot count or thinking-mode label, while stating the model operates in thinking mode by default (Qwen3.5-27B card: 'Qwen3.5 models operate in thinking mode by default'). Used for Qwen3.5-27B MMLU-Pro 86.1 and GPQA Diamond 85.5; a shot count must not be silently assigned (notes §3)."
+  },
+  {
+    "name": "unspecified by source (thinking-only model, reasoning_effort defaults to xhigh)",
+    "description": "Alibaba's Model Studio page attributes the score to qwen3.8-2.4t-a95b without an evaluation-condition label; the model is thinking-only (thinking cannot be disabled) with reasoning_effort defaulting to xhigh (xhigh/medium/low supported) per its card. Used for Qwen3.8-2.4T-A95B GPQA Diamond 92.6."
+  },
+  {
+    "name": "unspecified by source; LiveCodeBench release_v6",
+    "description": "Card-table LiveCodeBench pass@1 with no shot count stated, on release version v6 (card rows 'LiveCodeBench v6' / 'LiveCodeBench-v6'). Used for Qwen3.5-27B 80.7, GLM-4.7 84.9, and Qwen3.6-27B 83.9. The version is part of the setting because LiveCodeBench cross-version scores are not comparable; the vocabulary's shot-string entries carry no version."
+  },
+  {
+    "name": "unspecified by source (pass@1 convention; AIME I/II split not stated)",
+    "description": "Card-table AIME 2025 score with no shot count stated; the card does not say whether the number covers AIME I, AIME II, or both, nor the run count. Used for GLM-4.7 AIME 2025 95.7 (pass@1 is the benchmark metric; the prompting condition is unspecified)."
+  },
+  {
+    "name": "unspecified by source (temperature 1.0, top_p 0.95, max generation 163,840 tokens)",
+    "description": "GLM-5.2's card has no setting statement for its GPQA Diamond row; its reasoning footnote (for 'HLE & other reasoning tasks') gives temperature 1.0, top_p 0.95, and max generation 163,840 tokens, with no shot/mode label for GPQA — it is unclear whether the footnote's parameters apply to the GPQA score. Used for GLM-5.2 GPQA Diamond 91.2."
+  },
+  {
+    "name": "no tools, avg@32 (thinking model, temp 1.0, top-p 0.95, 256k context, 96k completion budget)",
+    "description": "Kimi K2.5 AIME 2025 condition per the model card's Testing Details: no tools, thinking mode, temperature 1.0, top-p 0.95, 256k context, 96k maximum completion budget; AIME results averaged over 32 runs (avg@32)."
+  },
+  {
+    "name": "no tools, avg@8 (thinking model, temp 1.0, top-p 0.95, 256k context, 96k completion budget)",
+    "description": "Kimi K2.5 GPQA-Diamond condition per the model card's Testing Details: no tools, thinking mode, temperature 1.0, top-p 0.95, 256k context, 96k completion budget; GPQA-Diamond averaged over 8 runs (avg@8)."
+  },
+  {
+    "name": "no tools (thinking model, temp 1.0, top-p 0.95, 256k context)",
+    "description": "Kimi K2.5 MMLU-Pro condition per the model card: no tools, thinking mode, temperature 1.0, top-p 0.95, 256k context; no shot count stated on the card."
+  },
+  {
+    "name": "no tools, thinking mode, LiveCodeBench v6, average of 5 runs (temp 1.0, top-p 0.95, 256k context)",
+    "description": "Kimi K2.5 LiveCodeBench (v6) condition per the model card: no tools, thinking mode, temperature 1.0, top-p 0.95, 256k context, coding-task scores averaged over 5 independent runs; no shot count stated."
+  },
+  {
+    "name": "Artificial Analysis Intelligence Index methodology (MiniMax self-run, AA-aligned)",
+    "description": "MiniMax-M2 Intelligence Benchmarks rows (AIME25, MMLU-Pro, GPQA-Diamond): scores aligned with the Artificial Analysis Intelligence Benchmarking Methodology (https://artificialanalysis.ai/methodology/intelligence-benchmarking), run by MiniMax; shot count not stated on the card."
+  },
+  {
+    "name": "Artificial Analysis Intelligence Index methodology (MiniMax self-run, AA-aligned; version/variant not stated on card)",
+    "description": "MiniMax-M2 LiveCodeBench row: aligned with the Artificial Analysis Intelligence Benchmarking Methodology, run by MiniMax; the card does not state the LiveCodeBench release version or the Pass@1 vs Pass@1-COT variant."
+  },
+  {
+    "name": "Artificial Analysis Intelligence Index methodology (MiniMax internal testing on public eval sets)",
+    "description": "MiniMax-M2.5 appendix rows (AIME25, GPQA-D): obtained through internal testing based on the public evaluation sets and evaluation methods covered by the Artificial Analysis Intelligence Index leaderboard; shot count not stated."
+  },
+  {
+    "name": "0-shot, pass@1, custom window 2024-10-01 to 2025-02-01",
+    "description": "Meta's Llama 4 Maverick card reports LiveCodeBench as 0-shot pass@1 over a custom time window (2024-10-01 to 2025-02-01), which is not a LiveCodeBench release_v1–v6 window; not directly comparable to release-version scores."
+  },
+  {
+    "name": "no tools, avg@32 (temp 1.0, 256k context, 96k thinking budget)",
+    "description": "Kimi K2 Thinking AIME25 condition per the model card: no tools, temperature 1.0, 256k context, 96k thinking-token budget; AIME reported as avg@32."
+  },
+  {
+    "name": "no tools (temp 1.0, 256k context)",
+    "description": "Kimi K2 Thinking MMLU-Pro condition per the model card: no tools, temperature 1.0, 256k context; no shot count stated."
+  },
+  {
+    "name": "no tools, LiveCodeBench V6 (temp 1.0, 128k thinking budget)",
+    "description": "Kimi K2 Thinking LiveCodeBench V6 condition per the model card: no tools, temperature 1.0, 128k thinking-token budget; no shot count stated."
+  },
+  {
+    "name": "no tools",
+    "description": "GPQA Diamond as published in the GPT-6.2 Astra/Sol system card: the card's exact row label is 'GPQA Diamond (no tools)' — accuracy, closed-book, the model selects one of four answers without external tools; the card states no shot count or CoT mode. Provider-reported setting (GPT-6.2 Astra 97.0, GPT-6.2 Sol 96.0)."
+  },
+  {
+    "name": "semi-private, max reasoning effort",
+    "description": "ARC Prize leaderboard (arcprize.org), ARC-AGI-2 (v2 semi-private set), evaluated with 'max' reasoning effort using the standard harness. Rows: GPT-6.2 Astra 95.8 (openai-gpt-6-2-astra-max, $0.970/task), GPT-6.2 Sol 85.8 (openai-gpt-6-2-sol-max, $0.261/task; partial dataset coverage — scores use full catalog denominators)."
+  },
+  {
+    "name": "semi-private, high reasoning effort",
+    "description": "ARC Prize leaderboard (arcprize.org), ARC-AGI-2 (v2 semi-private set), evaluated with 'high' reasoning effort using the standard harness. Row: GPT-6.2 Astra 94.6 (openai-gpt-6-2-astra-high, $0.408/task)."
+  },
+  {
+    "name": "semi-private, medium reasoning effort",
+    "description": "ARC Prize leaderboard (arcprize.org), ARC-AGI-2 (v2 semi-private set), evaluated with 'medium' reasoning effort using the standard harness. Row: GPT-6.2 Sol 82.9 (openai-gpt-6-2-sol-medium, $0.103/task; partial dataset coverage note on the row)."
   }
 ]
