@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { Benchmark, Model, Score } from "@llm-bench/schema";
+import type { Benchmark, Model } from "@llm-bench/schema";
 import { COMPARE_PATH, resolveRoute } from "../../apps/web/src/routes";
 import { startSpaStaticServer } from "./lib/spa-static-server";
 
@@ -84,4 +84,82 @@ describe("compare view (ticket 10)", () => {
     expect(resolveRoute("/models/gpt-5-2")).toEqual({ page: "model", modelId: "gpt-5-2" });
     expect(resolveRoute("/anything-else")).toEqual({ page: "not-found" });
   });
+
+  it(
+    "renders the compare view's furniture and real Model data in the built bundle",
+    () => {
+      const models = readJson<Model[]>("models.json");
+      const benchmarks = readJson<Benchmark[]>("benchmarks.json");
+      const build = runBuild();
+      expect(build.status).toBe(0);
+
+      const bundle = readBuiltBundle();
+
+      // The route wiring and the page's own heading.
+      expect(bundle).toContain("/compare");
+      expect(bundle).toContain("Compare Models");
+
+      // The leaderboard's compare affordance: the enabling control and the
+      // selection hint. (The per-row checkbox is generated per Model at
+      // render time; its "Compare " label prefix ships beside the data.)
+      expect(bundle).toContain("Compare selected (");
+      expect(bundle).toContain("Select 2 to 4 Models");
+
+      // Guard rails: fewer than 2 or more than 4 compared Models get a
+      // friendly message, and unknown ids are dropped with a note.
+      expect(bundle).toContain("A comparison shows 2 to 4 Models side by side");
+      expect(bundle).toContain("it was left out of this comparison");
+
+      // The charts: the radar's cap note and the bar chart's heading, with
+      // the n/a-never-zero rule and the no-selection note.
+      expect(bundle).toContain("Radar chart of selected Benchmarks");
+      expect(bundle).toContain("capped at ");
+      expect(bundle).toContain(" axes");
+      expect(bundle).toContain("Not on the radar:");
+      expect(bundle).toContain("Bar chart of all selected Benchmarks");
+      expect(bundle).toContain("never as zero");
+      expect(bundle).toContain("No Benchmarks selected.");
+
+      // The page is 100% data-driven: every Model's and Benchmark's name
+      // ships via the data package — the side-by-side table's headers and
+      // both charts' labels are built from them at render time.
+      for (const model of models) {
+        expect(bundle).toContain(jsonEscaped(model.name));
+      }
+      for (const benchmark of benchmarks) {
+        expect(bundle).toContain(jsonEscaped(benchmark.name));
+      }
+    },
+    480_000,
+  );
+
+  it(
+    "serves direct navigation to /compare through the SPA fallback, query strings preserved",
+    async () => {
+      ensureBuilt();
+      const indexHtml = readFileSync(path.join(DIST_DIR, "index.html"), "utf8");
+
+      const server = await startSpaStaticServer(DIST_DIR);
+      const base = `http://127.0.0.1:${server.port}`;
+      try {
+        // A direct navigation is a plain GET — exactly what a browser sends
+        // for a shared comparison or a refresh. The compared Models are
+        // query parameters, so the rewrite must preserve them.
+        for (const pathname of [
+          "/compare",
+          "/compare/", // a trailing slash is the same route
+          "/compare?compare=claude-opus-4-6,claude-sonnet-4-6",
+          "/compare?benchmarks=mmlu-pro,gpqa-diamond&compare=gpt-6-2-astra,kimi-k3-1-pro",
+        ]) {
+          const response = await fetch(`${base}${pathname}`);
+          expect(response.status, pathname).toBe(200);
+          expect(response.headers.get("content-type")).toContain("text/html");
+          expect(await response.text()).toBe(indexHtml);
+        }
+      } finally {
+        await server.close();
+      }
+    },
+    60_000,
+  );
 });

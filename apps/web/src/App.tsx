@@ -6,6 +6,7 @@ import { resolveRoute } from "./routes";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
 import { BenchmarkPage } from "./pages/BenchmarkPage";
 import { ModelPage } from "./pages/ModelPage";
+import { ComparePage } from "./pages/ComparePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 /**
@@ -38,9 +39,11 @@ function App() {
       ? (benchmark?.name ?? "Benchmark not found")
       : route.page === "model"
         ? (model?.name ?? "Model not found")
-        : route.page === "not-found"
-          ? "Page not found"
-          : SITE_TITLE;
+        : route.page === "compare"
+          ? "Compare Models"
+          : route.page === "not-found"
+            ? "Page not found"
+            : SITE_TITLE;
 
   const mainRef = useRef<HTMLElement | null>(null);
   const previousPathname = useRef(pathname);
@@ -76,6 +79,8 @@ function App() {
           <BenchmarkPage benchmarkId={route.benchmarkId} />
         ) : route.page === "model" ? (
           <ModelPage modelId={route.modelId} />
+        ) : route.page === "compare" ? (
+          <ComparePage />
         ) : (
           <NotFoundPage />
         )}
