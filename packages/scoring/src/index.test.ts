@@ -8,6 +8,7 @@ import {
   filterModels,
   primaryScoreFor,
   primaryScores,
+  rankModelsByAverage,
   selectedBenchmarks,
   sortModelsByColumn,
 } from "./index";
@@ -284,6 +285,112 @@ describe("sortModelsByColumn", () => {
 
     const byLicense = sortModelsByColumn(sortableModels, { column: "license", direction: "asc" }, context);
     expect(byLicense.map((model) => model.id)).toEqual(["model-c", "model-a", "model-b", "model-d"]);
+  });
+});
+
+describe("rankModelsByAverage", () => {
+  /**
+   * Hand-computed ranking fixtures. Selection: bench-1, bench-2, bench-3.
+   *
+   * - model-narrow  "Narrow Model"    bench-1 90                     → Average 90, Coverage 1
+   * - model-wide    "Wide Model"      bench-1 80, bench-2 90         → Average 85, Coverage 2
+   * - model-tie-high "Tie High Model" bench-1 80, bench-2 70, bench-3 90 → Average 80, Coverage 3
+   * - model-name-a  "alpha model"     bench-1 75, bench-2 85         → Average 80, Coverage 2
+   * - model-tie-low "Tie Low Model"   bench-1 70, bench-2 90         → Average 80, Coverage 2
+   * - model-name-z  "Zeta Model"      bench-1 70, bench-2 90         → Average 80, Coverage 2
+   * - model-unscored-a "alpha unscored", model-unscored-z "Zulu Unscored" → null Average
+   *
+   * model-tie-low also carries a NON-primary 99 on bench-3 that must never
+   * reach its Average (it would become 86.3 over Coverage 3 and rank 2nd).
+   */
+  const rankingModels: Model[] = [
+    makeModel({ id: "model-wide", name: "Wide Model" }),
+    makeModel({ id: "model-tie-low", name: "Tie Low Model" }),
+    makeModel({ id: "model-name-z", name: "Zeta Model" }),
+    makeModel({ id: "model-narrow", name: "Narrow Model" }),
+    makeModel({ id: "model-unscored-z", name: "Zulu Unscored" }),
+    makeModel({ id: "model-tie-high", name: "Tie High Model" }),
+    makeModel({ id: "model-name-a", name: "alpha model" }),
+    makeModel({ id: "model-unscored-a", name: "alpha unscored" }),
+  ];
+
+  const rankingScores: Score[] = [
+    makeScore({ modelId: "model-narrow", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-wide", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-wide", benchmarkId: "bench-2", value: 90 }),
+    makeScore({ modelId: "model-tie-high", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-tie-high", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-tie-high", benchmarkId: "bench-3", value: 90 }),
+    makeScore({ modelId: "model-name-a", benchmarkId: "bench-1", value: 75 }),
+    makeScore({ modelId: "model-name-a", benchmarkId: "bench-2", value: 85 }),
+    makeScore({ modelId: "model-tie-low", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-tie-low", benchmarkId: "bench-2", value: 90 }),
+    makeScore({ modelId: "model-name-z", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-name-z", benchmarkId: "bench-2", value: 90 }),
+    // The non-primary trap: never part of the Average, Coverage, or ranking.
+    makeScore({ modelId: "model-tie-low", benchmarkId: "bench-3", value: 99, isPrimary: false }),
+  ];
+
+  const rankingContext = {
+    scores: rankingScores,
+    benchmarkIds: ["bench-1", "bench-2", "bench-3"],
+  };
+
+  it("ranks by Average descending, ties by higher Coverage then Model name, null-Average Models last in name order", () => {
+    const ranked = rankModelsByAverage(rankingModels, rankingContext);
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-narrow", // Average 90
+      "model-wide", // Average 85
+      "model-tie-high", // Average 80, Coverage 3 beats Coverage 2
+      // Average 80, Coverage 2, alphabetical case-insensitive name:
+      "model-name-a", // "alpha model"
+      "model-tie-low", // "Tie Low Model"
+      "model-name-z", // "Zeta Model"
+      // null Averages last, alphabetical case-insensitive name:
+      "model-unscored-a", // "alpha unscored"
+      "model-unscored-z", // "Zulu Unscored"
+    ]);
+  });
+
+  it("never lets a non-primary Score change the Average, Coverage, or ranking", () => {
+    // The trap Score removed entirely — the ranking must be identical.
+    const withoutNonPrimary = rankModelsByAverage(rankingModels, {
+      scores: rankingScores.filter((score) => score.isPrimary),
+      benchmarkIds: rankingContext.benchmarkIds,
+    });
+
+    expect(withoutNonPrimary.map((model) => model.id)).toEqual(
+      rankModelsByAverage(rankingModels, rankingContext).map((model) => model.id),
+    );
+    // And the trapped Model's numbers are exactly the hand-computed ones.
+    expect(computeAverage("model-tie-low", rankingScores, { benchmarkIds: ["bench-1", "bench-2", "bench-3"] })).toEqual({
+      average: 80,
+      coverage: 2,
+      selected: 3,
+    });
+  });
+
+  it("counts Coverage against the active selection and reranks when it changes", () => {
+    // Selection narrowed to bench-2 only: Narrow/Zeta lose their only Score
+    // and drop to the null-Average group.
+    const ranked = rankModelsByAverage(rankingModels, {
+      scores: rankingScores,
+      benchmarkIds: ["bench-2"],
+    });
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      // Average 90, Coverage 1, alphabetical: "Tie Low Model", "Wide Model", "Zeta Model"
+      "model-tie-low",
+      "model-wide",
+      "model-name-z",
+      "model-name-a", // Average 85
+      "model-tie-high", // Average 70
+      // null Averages — bench-2 has no Primary score for them — by name:
+      "model-unscored-a", // "alpha unscored"
+      "model-narrow", // "Narrow Model" (its only Score is on unselected bench-1)
+      "model-unscored-z", // "Zulu Unscored"
+    ]);
   });
 });
 

@@ -150,6 +150,60 @@ export interface LeaderboardContext {
   benchmarkIds: readonly string[];
 }
 
+/**
+ * The leaderboard ranking: Models ordered by Average descending. Equal
+ * Averages break by higher Coverage, then by Model name ascending
+ * (case-insensitive), so the order is deterministic and defensible.
+ * null-Average Models — no Primary score among the selected Benchmarks —
+ * sort last, below every scored Model, ordered by name ascending among
+ * themselves. Only Primary scores feed the ranking, and Coverage is
+ * counted against the active Benchmark selection.
+ */
+export function rankModelsByAverage(
+  models: readonly Model[],
+  context: LeaderboardContext,
+): Model[] {
+  const results = new Map<string, AverageResult>();
+  for (const model of models) {
+    results.set(
+      model.id,
+      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
+    );
+  }
+  return [...models].sort((left, right) => compareForRanking(left, right, results));
+}
+
+/** The ranking chain after the primary comparison ties: Coverage desc, name asc. */
+function compareForRanking(
+  left: Model,
+  right: Model,
+  results: ReadonlyMap<string, AverageResult>,
+): number {
+  const leftResult = results.get(left.id);
+  const rightResult = results.get(right.id);
+  const leftAverage = leftResult?.average ?? null;
+  const rightAverage = rightResult?.average ?? null;
+
+  // null Averages sort last, below every scored Model, by name among themselves.
+  if (leftAverage === null && rightAverage === null) return compareModelNames(left, right);
+  if (leftAverage === null) return 1;
+  if (rightAverage === null) return -1;
+  if (leftAverage !== rightAverage) return rightAverage - leftAverage;
+
+  const leftCoverage = leftResult?.coverage ?? 0;
+  const rightCoverage = rightResult?.coverage ?? 0;
+  if (leftCoverage !== rightCoverage) return rightCoverage - leftCoverage;
+
+  return compareModelNames(left, right);
+}
+
+/** Case-insensitive Model name comparison for deterministic ordering. */
+function compareModelNames(left: Model, right: Model): number {
+  const a = left.name.toLowerCase();
+  const b = right.name.toLowerCase();
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** The sortable value of one column for one Model; null means missing. */
 type ColumnValue = string | number | null;
 
