@@ -247,6 +247,29 @@ a {
   font-style: italic;
 }
 
+/* Every Average carries its Coverage as (n/selected); the count reads as
+   secondary metadata next to the number itself. */
+.coverage-count {
+  color: light-dark(#64748b, #94a3b8);
+  font-size: 0.875rem;
+}
+
+/* Visible badge for Models under 50% Coverage of the active selection —
+   computed from the Coverage fraction, never from a Model list. */
+.coverage-badge {
+  display: inline-block;
+  margin-left: 0.375rem;
+  padding: 0.0625rem 0.5rem;
+  border: 1px solid light-dark(#d97706, #b45309);
+  border-radius: 999px;
+  background: light-dark(#fef3c7, #451a03);
+  color: light-dark(#92400e, #fcd34d);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .license-name {
   display: block;
   font-size: 0.75rem;

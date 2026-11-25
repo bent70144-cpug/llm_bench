@@ -6,6 +6,8 @@ import {
   computeAverage,
   defaultSelectedBenchmarkIds,
   filterModels,
+  formatCoverage,
+  isUnderHalfCoverage,
   primaryScoreFor,
   selectedBenchmarks,
   sortModelsByColumn,
@@ -139,7 +141,13 @@ export function LeaderboardPage() {
   const [minContextWindow, setMinContextWindow] = useState("");
   const [maxInputPrice, setMaxInputPrice] = useState("");
   const [maxOutputPrice, setMaxOutputPrice] = useState("");
-  const [sort, setSort] = useState<LeaderboardSort | null>(null);
+  // The leaderboard opens on the ranking: Average descending with the
+  // deterministic tie-breaks (equal Averages by higher Coverage, then Model
+  // name; null-Average Models last) — computed by @llm-bench/scoring.
+  const [sort, setSort] = useState<LeaderboardSort>({
+    column: "average",
+    direction: "desc",
+  });
 
   const visibleBenchmarks = useMemo(
     () => selectedBenchmarks(benchmarks, selectedBenchmarkIds),
@@ -170,10 +178,7 @@ export function LeaderboardPage() {
     [selectedBenchmarkIds],
   );
   const rows = useMemo(
-    () =>
-      sort === null
-        ? filteredModels
-        : sortModelsByColumn(filteredModels, sort, leaderboardContext),
+    () => sortModelsByColumn(filteredModels, sort, leaderboardContext),
     [filteredModels, sort, leaderboardContext],
   );
 
@@ -349,12 +354,20 @@ export function LeaderboardPage() {
                         model.outputPricePer1M.toFixed(2)
                       )}
                     </td>
-                    <td>
-                      {average === null ? <span className="missing">n/a</span> : formatAverage(average)}
+                    <td className="average-cell">
+                      {average === null ? (
+                        <span className="missing">n/a</span>
+                      ) : (
+                        formatAverage(average)
+                      )}{" "}
+                      <span className="coverage-count">
+                        {formatCoverage({ average, coverage, selected })}
+                      </span>
+                      {isUnderHalfCoverage({ average, coverage, selected }) ? (
+                        <span className="coverage-badge">Under 50% Coverage</span>
+                      ) : null}
                     </td>
-                    <td>
-                      ({coverage}/{selected})
-                    </td>
+                    <td>{formatCoverage({ average, coverage, selected })}</td>
                     {visibleBenchmarks.map((benchmark) => {
                       const score = primaryScoreFor(model.id, benchmark.id, scores);
                       const isBest =
@@ -382,11 +395,13 @@ export function LeaderboardPage() {
         </table>
       </div>
       <p className="table-note">
-        Average and Coverage are computed over the {selectedBenchmarkIds.length} selected
-        Benchmark{selectedBenchmarkIds.length === 1 ? "" : "s"}, from Primary scores only; the best
-        Score per Benchmark is highlighted. Missing Scores are shown as &ldquo;n/a&rdquo;, never as
-        zero, and each Score links to its published source. Each Benchmark&rsquo;s name links to its
-        detail page.
+        Average over {selectedBenchmarkIds.length} selected
+        Benchmark{selectedBenchmarkIds.length === 1 ? "" : "s"}, from Primary scores only:
+        every Average is shown with its Coverage as (n/{selectedBenchmarkIds.length}), and
+        Models under 50% Coverage of the active selection carry an &ldquo;Under 50%
+        Coverage&rdquo; badge. The best Score per Benchmark is highlighted. Missing Scores are
+        shown as &ldquo;n/a&rdquo;, never as zero, and each Score links to its published source.
+        Each Benchmark&rsquo;s name links to its detail page.
       </p>
     </>
   );
