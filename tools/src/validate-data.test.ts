@@ -54,7 +54,30 @@ describe("validate-data CLI", () => {
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
     expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
     expect(result.output).toContain("value");
+  });
+
+  it("exits non-zero and names the Score when publishedDate is missing", () => {
+    const fixture = validFixture();
+    delete firstScore(fixture).publishedDate;
+
+    const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("publishedDate");
+  });
+
+  it("exits non-zero and names the Score when retrievedDate is missing", () => {
+    const fixture = validFixture();
+    delete firstScore(fixture).retrievedDate;
+
+    const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("retrievedDate");
   });
 
   it("exits non-zero when publishedDate is after retrievedDate", () => {
@@ -190,5 +213,75 @@ describe("validate-data CLI", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Canonical sources");
+  });
+
+  it("exits non-zero when a Primary score's source URL matches no Canonical sources urlPattern", () => {
+    const fixture = validFixture();
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "provider", urlPatterns: ["^https://cards\\.example\\.com/"] },
+    ];
+    firstScore(fixture).sourceUrl = "https://elsewhere.example.com/model-a";
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("model-a on bench-1");
+    expect(result.output).toContain("urlPattern");
+  });
+
+  it("accepts a full-featured valid dataset (optional Model fields, third-party rate, urlPatterns, alternate Evaluation settings)", () => {
+    const fixture = validFixture();
+    const model = firstModel(fixture);
+    model.licenseName = "Model A Community License";
+    model.notes = "Optional notes.";
+    const models = fixture["models.json"] as Array<Record<string, unknown>>;
+    models.push({
+      id: "model-b",
+      name: "Model B",
+      provider: "Provider B",
+      license: "open-source",
+      licenseName: "MIT",
+      releaseDate: "2026-01-05",
+      contextWindow: 64000,
+      inputPricePer1M: 0.5,
+      outputPricePer1M: 1.5,
+      referenceInferenceProvider: "Third Party Host",
+      lastUpdated: "2026-02-01",
+      sourceUrl: "https://example.com/model-b",
+      notes: "Rate recorded from a Reference inference provider.",
+    });
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "provider", urlPatterns: ["^https://cards\\.example\\.com/"] },
+      { sourceType: "leaderboard" },
+    ];
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // Primary score from a provider card matching the urlPattern.
+    firstScore(fixture).sourceUrl = "https://cards.example.com/model-a";
+    // Alternate Evaluation setting: non-primary, so Canonical sources do not apply.
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 60,
+      sourceType: "third-party",
+      sourceUrl: "https://blog.example.com/model-a-review",
+      isPrimary: false,
+    });
+    // A second Model's Primary score from an eligible leaderboard source without urlPatterns.
+    scores.push({
+      ...firstScore(fixture),
+      modelId: "model-b",
+      evaluationSetting: "5-shot",
+      value: 70,
+      sourceType: "leaderboard",
+      sourceUrl: "https://board.example.com/rankings",
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(0);
   });
 });
