@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
-import { models as publishedModels, scores as publishedScores } from "@llm-bench/data";
+import {
+  benchmarks as publishedBenchmarks,
+  models as publishedModels,
+  scores as publishedScores,
+} from "@llm-bench/data";
 
 import {
   bestValueByBenchmark,
   computeAverage,
+  computeWeightedAverage,
+  decodeLeaderboardUrlState,
+  DEFAULT_LEADERBOARD_SORT,
   defaultSelectedBenchmarkIds,
+  encodeLeaderboardUrlState,
   filterModels,
   formatCoverage,
   isUnderHalfCoverage,
@@ -16,6 +24,8 @@ import {
   scoresForPair,
   selectedBenchmarks,
   sortModelsByColumn,
+  weightsAreActive,
+  type LeaderboardUrlState,
 } from "./index";
 
 /**
@@ -112,6 +122,179 @@ describe("computeAverage", () => {
     });
 
     expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+});
+
+describe("computeWeightedAverage", () => {
+  // Two Models with symmetric Profiles over two Benchmarks: plain Averages
+  // tie at 80, so only the weights can separate them.
+  const weightedScores: Score[] = [
+    makeScore({ modelId: "model-p", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-p", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-2", value: 90 }),
+    // A sparse Model: its only Primary score is on bench-1.
+    makeScore({ modelId: "model-s", benchmarkId: "bench-1", value: 90 }),
+  ];
+  const bothBenchmarks = ["bench-1", "bench-2"];
+
+  it("weights each covered Benchmark and normalizes by the weights of the Benchmarks the Model has", () => {
+    // Model A on the shared fixture: 80 and 90 with weights {2, 1}:
+    // (2*80 + 1*90) / (2 + 1) = 250/3 ≈ 83.33.
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 250 / 3, coverage: 2, selected: 2 });
+  });
+
+  it("swapping the weights swaps the emphasis — {2,1} vs {1,2} reorder the Models", () => {
+    // Model P (90, 70) vs Model Q (70, 90): plain Averages tie at 80.
+    // Weights {bench-1: 2, bench-2: 1}: P = 250/3 ≈ 83.33, Q = 230/3 ≈ 76.67.
+    // Weights {bench-1: 1, bench-2: 2}: P = 230/3, Q = 250/3 — reversed.
+    const first = computeWeightedAverage("model-p", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+    const second = computeWeightedAverage("model-q", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+    expect(first.average).toBe(250 / 3);
+    expect(second.average).toBe(230 / 3);
+    expect((first.average ?? 0) > (second.average ?? 0)).toBe(true);
+
+    const flipped = computeWeightedAverage("model-p", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+    const flippedOther = computeWeightedAverage("model-q", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+    expect(flipped.average).toBe(230 / 3);
+    expect(flippedOther.average).toBe(250 / 3);
+    expect((flippedOther.average ?? 0) > (flipped.average ?? 0)).toBe(true);
+  });
+
+  it("a sparse Model is not penalized: a weight applies only to the Benchmarks it has", () => {
+    // Model S has only bench-1 (the double-weighted Benchmark): its
+    // Weighted Average is its single score, 90 — normalized by 2/2, not
+    // counted as missing bench-2.
+    const result = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 90, coverage: 1, selected: 2 });
+  });
+
+  it("all-default weights reproduce the plain Average exactly", () => {
+    const plain = computeAverage("model-a", scores, { benchmarkIds: bothBenchmarks });
+    const noWeights = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: {},
+    });
+    const defaultWeights = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 1 },
+    });
+
+    expect(noWeights).toEqual(plain);
+    expect(defaultWeights).toEqual(plain);
+  });
+
+  it("returns a null aggregate when no Benchmark is selected", () => {
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: [],
+      weights: { "bench-1": 2 },
+    });
+
+    expect(result).toEqual({ average: null, coverage: 0, selected: 0 });
+  });
+
+  it("a weight of 0 excludes a Benchmark from the aggregate but keeps it in Coverage", () => {
+    // Weight 0 on bench-1: the aggregate is 90/1 = 90 — bench-1 no longer
+    // contributes — but Coverage still counts both Benchmarks (Coverage is
+    // unweighted).
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 0, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 90, coverage: 2, selected: 2 });
+  });
+
+  it("a Model whose covered Benchmarks all carry weight 0 has no Weighted Average", () => {
+    // Model S only has bench-1, and bench-1 is excluded by weight 0: the
+    // normalization would divide by 0, so the aggregate is null — the Model
+    // sorts with the null-aggregate Models, "n/a", never zero.
+    const result = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 0, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: null, coverage: 1, selected: 2 });
+  });
+
+  it("ignores non-primary Scores and weights on unselected Benchmarks", () => {
+    // The non-primary 70 on bench-2 must not feed the aggregate; a weight
+    // on bench-3 (not selected) changes nothing.
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 1, "bench-3": 5 },
+    });
+
+    expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+
+  it("treats invalid weights (negative, non-finite) as the default 1", () => {
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": -3, "bench-2": Number.POSITIVE_INFINITY },
+    });
+
+    expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+
+  it("yields the same Coverage display and badge inputs as the plain Average", () => {
+    // Coverage is unweighted: formatCoverage and isUnderHalfCoverage read
+    // the same (n/selected) whether or not weights are active. Model S
+    // covers 1 of 3 selected Benchmarks — under 50%, so badged.
+    const weighted = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: ["bench-1", "bench-2", "bench-3"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(formatCoverage(weighted)).toBe("(1/3)");
+    expect(isUnderHalfCoverage(weighted)).toBe(true);
+  });
+});
+
+describe("weightsAreActive", () => {
+  it("is false when no weight is set or every set weight is the default 1", () => {
+    expect(weightsAreActive({}, ["bench-1", "bench-2"])).toBe(false);
+    expect(weightsAreActive({ "bench-1": 1, "bench-2": 1 }, ["bench-1", "bench-2"])).toBe(false);
+  });
+
+  it("is true when any selected Benchmark carries a non-default weight", () => {
+    expect(weightsAreActive({ "bench-1": 2 }, ["bench-1", "bench-2"])).toBe(true);
+    // 0 is non-default too: it excludes the Benchmark from the aggregate.
+    expect(weightsAreActive({ "bench-1": 0 }, ["bench-1", "bench-2"])).toBe(true);
+    expect(weightsAreActive({ "bench-1": 0.5 }, ["bench-1", "bench-2"])).toBe(true);
+  });
+
+  it("is false when the non-default weight sits on an unselected Benchmark", () => {
+    // The label describes the number actually displayed: a remembered
+    // weight on a Benchmark outside the selection does not change the
+    // computed value, so the aggregate stays a plain Average.
+    expect(weightsAreActive({ "bench-3": 2 }, ["bench-1", "bench-2"])).toBe(false);
+  });
+
+  it("is false for invalid weights (negative, non-finite)", () => {
+    expect(weightsAreActive({ "bench-1": -2 }, ["bench-1"])).toBe(false);
+    expect(weightsAreActive({ "bench-1": Number.NaN }, ["bench-1"])).toBe(false);
   });
 });
 
@@ -498,6 +681,191 @@ describe("rankModelsByAverage", () => {
   });
 });
 
+describe("ranking on the active aggregate (Weighted Average when weights are active)", () => {
+  /**
+   * Hand-computed weighted ranking fixtures. Selection: bench-1, bench-2.
+   *
+   * - model-p "P Model"     bench-1 90, bench-2 70
+   * - model-q "Q Model"     bench-1 70, bench-2 90
+   * - model-s "S Model"     bench-1 90 (sparse: only the double-weightable Benchmark)
+   * - model-z "Z Model"     bench-2 60
+   *
+   * Weights {bench-1: 2, bench-2: 1}: P = 250/3 ≈ 83.33, Q = 230/3 ≈ 76.67,
+   * S = 90 (2·90/2 — not penalized for missing bench-2), Z = 60.
+   * Weights {bench-1: 1, bench-2: 2}: P = 230/3, Q = 250/3 — P and Q swap.
+   */
+  const weightedRankingModels: Model[] = [
+    makeModel({ id: "model-p", name: "P Model" }),
+    makeModel({ id: "model-q", name: "Q Model" }),
+    makeModel({ id: "model-s", name: "S Model" }),
+    makeModel({ id: "model-z", name: "Z Model" }),
+  ];
+  const weightedRankingScores: Score[] = [
+    makeScore({ modelId: "model-p", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-p", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-2", value: 90 }),
+    makeScore({ modelId: "model-s", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-z", benchmarkId: "bench-2", value: 60 }),
+  ];
+
+  it("ranks by the Weighted Average when weights are active on the selection", () => {
+    const ranked = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-s", // 90 over its only covered Benchmark
+      "model-p", // 250/3 ≈ 83.33
+      "model-q", // 230/3 ≈ 76.67
+      "model-z", // 60
+    ]);
+  });
+
+  it("swapping the weights reorders the Models", () => {
+    const ranked = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-s", // 90
+      "model-q", // 250/3 — now above P
+      "model-p", // 230/3
+      "model-z", // 60
+    ]);
+  });
+
+  it("ranks identically to the plain Average when the weights are all default", () => {
+    const plain = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+    });
+    const withDefaults = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 1 },
+    });
+    // A weight on an unselected Benchmark is remembered but inactive.
+    const withInactive = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-3": 5 },
+    });
+
+    expect(withDefaults.map((model) => model.id)).toEqual(plain.map((model) => model.id));
+    expect(withInactive.map((model) => model.id)).toEqual(plain.map((model) => model.id));
+  });
+
+  it("applies the same tie-break chain and null-aggregate ordering to the Weighted Average", () => {
+    // Weights {bench-1: 1, bench-2: 0}: bench-2 is excluded from the
+    // aggregate, so the Weighted Average is each Model's bench-1 score while
+    // Coverage still counts both Benchmarks.
+    //
+    // - model-alpha "alpha model" bench-1 90, bench-2 50 → 90, Coverage 2
+    // - model-pair  "Pair Model"  bench-1 90, bench-2 70 → 90, Coverage 2
+    // - model-solo  "Solo Model"  bench-1 90             → 90, Coverage 1
+    // - model-low   "Low Model"   bench-1 70, bench-2 90 → 70
+    // - model-excl  "Excluded"    bench-2 90             → null (its only
+    //   covered Benchmark carries weight 0) — sorts last, never zero.
+    const tieModels: Model[] = [
+      makeModel({ id: "model-pair", name: "Pair Model" }),
+      makeModel({ id: "model-solo", name: "Solo Model" }),
+      makeModel({ id: "model-low", name: "Low Model" }),
+      makeModel({ id: "model-excl", name: "Excluded Model" }),
+      makeModel({ id: "model-alpha", name: "alpha model" }),
+    ];
+    const tieScores: Score[] = [
+      makeScore({ modelId: "model-pair", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-pair", benchmarkId: "bench-2", value: 70 }),
+      makeScore({ modelId: "model-solo", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-low", benchmarkId: "bench-1", value: 70 }),
+      makeScore({ modelId: "model-low", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-excl", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-alpha", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-alpha", benchmarkId: "bench-2", value: 50 }),
+    ];
+    const context = {
+      scores: tieScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 0 },
+    };
+
+    const ranked = rankModelsByAverage(tieModels, context);
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-alpha", // 90, Coverage 2, "alpha model"
+      "model-pair", // 90, Coverage 2, "Pair Model" — name after "alpha model"
+      "model-solo", // 90, Coverage 1 — loses the tie by lower Coverage
+      "model-low", // 70
+      "model-excl", // null Weighted Average — last, below every scored Model
+    ]);
+
+    // The Average-column sort descending is exactly the ranking, weights
+    // included — the identity the leaderboard UI relies on.
+    const sorted = sortModelsByColumn(tieModels, { column: "average", direction: "desc" }, context);
+    expect(sorted.map((model) => model.id)).toEqual(ranked.map((model) => model.id));
+  });
+
+  it("sorts the Average column ascending under weights, null aggregates still last", () => {
+    const context = {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    };
+    const asc = sortModelsByColumn(
+      weightedRankingModels,
+      { column: "average", direction: "asc" },
+      context,
+    );
+
+    expect(asc.map((model) => model.id)).toEqual([
+      "model-z", // 60
+      "model-q", // 230/3
+      "model-p", // 250/3
+      "model-s", // 90
+    ]);
+  });
+
+  it("breaks Benchmark-column ties by the weighted ranking chain when weights are active", () => {
+    // Sorting by the bench-1 column under weights {bench-1: 1, bench-2: 0}:
+    // the 90 ties break by the Weighted Average chain (Coverage, then name),
+    // not by the plain Average.
+    const tieContext = {
+      scores: [
+        makeScore({ modelId: "model-pair", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-pair", benchmarkId: "bench-2", value: 70 }),
+        makeScore({ modelId: "model-solo", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-low", benchmarkId: "bench-1", value: 70 }),
+        makeScore({ modelId: "model-low", benchmarkId: "bench-2", value: 90 }),
+        makeScore({ modelId: "model-excl", benchmarkId: "bench-2", value: 90 }),
+        makeScore({ modelId: "model-alpha", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-alpha", benchmarkId: "bench-2", value: 50 }),
+      ],
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 0 },
+    };
+    const models = [
+      makeModel({ id: "model-pair", name: "Pair Model" }),
+      makeModel({ id: "model-solo", name: "Solo Model" }),
+      makeModel({ id: "model-low", name: "Low Model" }),
+      makeModel({ id: "model-excl", name: "Excluded Model" }),
+      makeModel({ id: "model-alpha", name: "alpha model" }),
+    ];
+
+    const desc = sortModelsByColumn(models, { column: "bench-1", direction: "desc" }, tieContext);
+    expect(desc.map((model) => model.id)).toEqual([
+      "model-alpha", // 90 tie → Weighted Average 90, Coverage 2
+      "model-pair", // 90 tie → Weighted Average 90, Coverage 2, name after
+      "model-solo", // 90 tie → Weighted Average 90, Coverage 1
+      "model-low", // 70
+      "model-excl", // missing on bench-1 — last, never zero
+    ]);
+  });
+});
+
 describe("formatCoverage", () => {
   it("renders the Coverage display form (n/selected)", () => {
     expect(formatCoverage({ average: 85, coverage: 2, selected: 3 })).toBe("(2/3)");
@@ -880,6 +1248,288 @@ describe("modelDataCurrency", () => {
         expect(modelDataCurrency(model, publishedScores)).toBe("2026-11-26");
       }
       expect(publishedModels).toHaveLength(26);
+    });
+  });
+});
+
+describe("leaderboard URL state (encode/decode)", () => {
+  // A miniature catalogue: bench-1 and bench-2 are core-Tier (the default
+  // selection), bench-3 is extended.
+  const catalogue: Benchmark[] = [
+    makeBenchmark({ id: "bench-1", name: "Bench 1" }),
+    makeBenchmark({ id: "bench-2", name: "Bench 2" }),
+    makeBenchmark({ id: "bench-3", name: "Bench 3", tier: "extended" }),
+  ];
+
+  it("encodes a full view into the documented compact, human-readable format", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "gpt 5",
+      licenses: ["proprietary"],
+      providers: ["OpenAI"],
+      minContextWindow: 500000,
+      maxInputPricePer1M: undefined,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: ["model-a", "model-b"],
+    });
+
+    // Fixed parameter order; default sort omitted; default weights omitted;
+    // commas and colons stay readable.
+    expect(query).toBe(
+      "benchmarks=bench-1,bench-2&weights=bench-1:2&q=gpt+5&license=proprietary" +
+        "&provider=OpenAI&min-context=500000&compare=model-a,model-b",
+    );
+  });
+
+  it("encodes the price ceilings and a non-default sort", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: ["bench-3"],
+      weights: {},
+      sort: { column: "bench-3", direction: "asc" },
+      search: "",
+      licenses: [],
+      providers: [],
+      minContextWindow: undefined,
+      maxInputPricePer1M: 4.5,
+      maxOutputPricePer1M: 10,
+      comparedModelIds: [],
+    });
+
+    expect(query).toBe(
+      "benchmarks=bench-3&sort=bench-3:asc&max-input-price=4.5&max-output-price=10",
+    );
+  });
+
+  it("always encodes the selection explicitly — an empty selection is benchmarks=", () => {
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: [],
+      weights: {},
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      comparedModelIds: [],
+    });
+
+    expect(query).toBe("benchmarks=");
+  });
+
+  it("decodes the documented format back into the same state", () => {
+    const state = decodeLeaderboardUrlState(
+      "benchmarks=bench-2,bench-1&weights=bench-2:0.5&q=gpt+5&license=proprietary,open-weights" +
+        "&provider=Mistral+AI,OpenAI&min-context=500000&max-input-price=4.5&compare=model-a,model-b",
+      catalogue,
+    );
+
+    expect(state).toEqual({
+      benchmarkIds: ["bench-2", "bench-1"],
+      weights: { "bench-2": 0.5 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "gpt 5",
+      licenses: ["proprietary", "open-weights"],
+      providers: ["Mistral AI", "OpenAI"],
+      minContextWindow: 500000,
+      maxInputPricePer1M: 4.5,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: ["model-a", "model-b"],
+    });
+  });
+
+  it("decodes a sort on a Benchmark column and accepts a leading '?'", () => {
+    const state = decodeLeaderboardUrlState("?sort=bench-3:asc", catalogue);
+
+    expect(state.sort).toEqual({ column: "bench-3", direction: "asc" });
+    // No benchmarks parameter: the Tier-driven default selection.
+    expect(state.benchmarkIds).toEqual(["bench-1", "bench-2"]);
+  });
+
+  it("treats benchmarks= as an explicit empty selection, distinct from an absent parameter", () => {
+    // Absent → the core-Tier default; present but all-unknown → dropped to
+    // an explicit empty selection (the visitor chose Benchmarks that no
+    // longer exist — the view is honest about that, it does not silently
+    // re-select the defaults).
+    expect(decodeLeaderboardUrlState("", catalogue).benchmarkIds).toEqual(["bench-1", "bench-2"]);
+    expect(decodeLeaderboardUrlState("benchmarks=", catalogue).benchmarkIds).toEqual([]);
+    expect(decodeLeaderboardUrlState("benchmarks=ghost", catalogue).benchmarkIds).toEqual([]);
+  });
+
+  it("round-trips representative views exactly: decode(encode(state)) == state", () => {
+    const states: LeaderboardUrlState[] = [
+      // The default view: core selection, no weights, default sort.
+      {
+        benchmarkIds: ["bench-1", "bench-2"],
+        weights: {},
+        sort: DEFAULT_LEADERBOARD_SORT,
+        search: "",
+        licenses: [],
+        providers: [],
+        comparedModelIds: [],
+      },
+      // Everything at once: weights (including 0 and a remembered weight on
+      // an unselected Benchmark), a Benchmark-column sort, search text with
+      // URL-significant characters, both price ceilings, compared Models.
+      {
+        benchmarkIds: ["bench-1", "bench-3"],
+        weights: { "bench-1": 0, "bench-2": 3, "bench-3": 0.5 },
+        sort: { column: "bench-1", direction: "asc" },
+        search: "gpt & 5 =? #2",
+        licenses: ["open-weights", "open-source"],
+        providers: ["Mistral AI", "Z.ai"],
+        minContextWindow: 0,
+        maxInputPricePer1M: 4.5,
+        maxOutputPricePer1M: 10,
+        comparedModelIds: ["model-a", "model-b", "model-c"],
+      },
+      // An empty selection round-trips as benchmarks= — the shared URL keeps
+      // meaning "no Benchmark selected".
+      {
+        benchmarkIds: [],
+        weights: { "bench-1": 2 },
+        sort: { column: "provider", direction: "desc" },
+        search: "  ",
+        licenses: [],
+        providers: [],
+        comparedModelIds: [],
+      },
+    ];
+
+    for (const state of states) {
+      expect(decodeLeaderboardUrlState(encodeLeaderboardUrlState(state), catalogue)).toEqual(state);
+    }
+  });
+
+  it("ignores unknown parameters and malformed values — no throw, defaults win", () => {
+    const state = decodeLeaderboardUrlState(
+      "?foo=bar&benchmarks=ghost,bench-1,bench-1&weights=ghost:2,bench-2:abc,bench-1:-3,bench-2:0.5,bench-3:1" +
+        "&sort=nonsense:desc&sort=average:sideways&q=&license=proprietary,banana&min-context=-5" +
+        "&max-input-price=nan&compare=,,&%zz=broke",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]); // unknown dropped, duplicate collapsed
+    expect(state.weights).toEqual({ "bench-2": 0.5 }); // unknown id, garbage number, negative, and default 1 all dropped
+    expect(state.sort).toEqual(DEFAULT_LEADERBOARD_SORT); // unknown column and bad direction
+    expect(state.search).toBe("");
+    expect(state.licenses).toEqual(["proprietary"]); // value outside the three-value License enum
+    expect(state.minContextWindow).toBeUndefined(); // negative
+    expect(state.maxInputPricePer1M).toBeUndefined(); // not a number
+    expect(state.comparedModelIds).toEqual([]); // empty entries dropped
+  });
+
+  it("keeps the first occurrence when a parameter repeats", () => {
+    const state = decodeLeaderboardUrlState(
+      "?benchmarks=bench-1&benchmarks=bench-3&q=first&q=second",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]);
+    expect(state.search).toBe("first");
+  });
+
+  it("drops decoded benchmark ids that no longer exist in the catalogue", () => {
+    // A shared URL from before a Benchmark was retired: the selection keeps
+    // the Benchmarks that still exist; a weight on a retired Benchmark is
+    // dropped with it; sorting by a retired Benchmark falls back to the
+    // default sort.
+    const state = decodeLeaderboardUrlState(
+      "benchmarks=bench-1,retired-bench&weights=retired-bench:2,bench-1:3&sort=retired-bench:desc",
+      catalogue,
+    );
+
+    expect(state.benchmarkIds).toEqual(["bench-1"]);
+    expect(state.weights).toEqual({ "bench-1": 3 });
+    expect(state.sort).toEqual(DEFAULT_LEADERBOARD_SORT);
+  });
+
+  it("keeps Provider and compared-Model ids verbatim — stale names filter to no Models rather than being silently dropped", () => {
+    // Providers and Models cannot be validated against the Benchmark
+    // catalogue; a stale name in a shared URL restores the view exactly,
+    // and "No Models match the current search and filters" is the honest
+    // rendering of a filter for something that no longer exists.
+    const state = decodeLeaderboardUrlState(
+      "provider=Former+Labs&compare=retired-model,still-here",
+      catalogue,
+    );
+
+    expect(state.providers).toEqual(["Former Labs"]);
+    expect(state.comparedModelIds).toEqual(["retired-model", "still-here"]);
+  });
+});
+
+describe("Weighted Average against the real Published Results in @llm-bench/data", () => {
+  // Real pair (impl-04 data): over the default 12 core Benchmarks,
+  // Claude Opus 4.6 covers gpqa-diamond 91.31, aime-2025 99.79,
+  // tau2-bench 91.89, swebench-verified 75.6 → plain Average 358.59/4 =
+  // 89.6475. Claude Sonnet 4.6 covers swebench-verified 79.6,
+  // gpqa-diamond 89.9, aime-2025 95.6, tau2-bench 91.7 → 356.8/4 = 89.2.
+  // Opus leads. Weighting SWE-bench Verified ×2: Opus
+  // (91.31 + 99.79 + 91.89 + 2·75.6)/5 = 434.19/5 = 86.838; Sonnet
+  // (89.9 + 95.6 + 91.7 + 2·79.6)/5 = 436.4/5 = 87.28 — Sonnet overtakes.
+  const coreSelection = defaultSelectedBenchmarkIds(publishedBenchmarks);
+  const context = { scores: publishedScores, benchmarkIds: coreSelection };
+
+  it("reorders Claude Opus 4.6 and Claude Sonnet 4.6 when SWE-bench Verified counts double", () => {
+    const plain = rankModelsByAverage(publishedModels, context);
+    expect(plain.indexOf(publishedModels.find((m) => m.id === "claude-opus-4-6")!)).toBeLessThan(
+      plain.indexOf(publishedModels.find((m) => m.id === "claude-sonnet-4-6")!),
+    );
+
+    const weighted = rankModelsByAverage(publishedModels, {
+      ...context,
+      weights: { "swebench-verified": 2 },
+    });
+    expect(
+      weighted.indexOf(publishedModels.find((m) => m.id === "claude-sonnet-4-6")!),
+    ).toBeLessThan(weighted.indexOf(publishedModels.find((m) => m.id === "claude-opus-4-6")!));
+  });
+
+  it("computes the hand-computed Weighted Averages for the pair", () => {
+    const opus = computeWeightedAverage("claude-opus-4-6", publishedScores, {
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+    });
+    const sonnet = computeWeightedAverage("claude-sonnet-4-6", publishedScores, {
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+    });
+
+    expect(opus.average).toBeCloseTo(86.838, 3);
+    expect(sonnet.average).toBeCloseTo(87.28, 3);
+    // Coverage is unweighted: still 4 of the 12 selected Benchmarks each.
+    expect(formatCoverage(opus)).toBe("(4/12)");
+    expect(formatCoverage(sonnet)).toBe("(4/12)");
+  });
+
+  it("encodes the shared URL for that weighted view and decodes it back exactly", () => {
+    // The URL a visitor shares after weighting SWE-bench Verified ×2 over
+    // the default core selection: only the non-default weight appears.
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      comparedModelIds: [],
+    });
+    expect(query).toBe(
+      "benchmarks=mmlu-pro,mmlu,gpqa-diamond,bbh,math-500,aime-2025,humaneval,livecodebench," +
+        "swebench-verified,tau2-bench,ifeval,hellaswag&weights=swebench-verified:2",
+    );
+
+    expect(decodeLeaderboardUrlState(query, publishedBenchmarks)).toEqual({
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      minContextWindow: undefined,
+      maxInputPricePer1M: undefined,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: [],
     });
   });
 });

@@ -150,6 +150,20 @@ th .column-link {
   gap: 0.25rem 1rem;
 }
 
+.controls fieldset.weights-selection {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.weights-hint,
+.weights-empty {
+  flex-basis: 100%;
+  margin: 0;
+  color: light-dark(#64748b, #94a3b8);
+  font-size: 0.75rem;
+}
+
 .benchmark-meta {
   color: light-dark(#64748b, #94a3b8);
   font-size: 0.75rem;
@@ -174,6 +188,10 @@ th .column-link {
 
 .controls input[type="number"] {
   width: 11rem;
+}
+
+.controls .weight-option input[type="number"] {
+  width: 5rem;
 }
 
 /* Sortable column headers */
