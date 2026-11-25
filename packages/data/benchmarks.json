@@ -1,38 +1,308 @@
 [
   {
-    "id": "gpqa-diamond",
-    "name": "GPQA Diamond",
-    "category": "reasoning",
-    "description": "The 198-question hardest and highest-quality subset of GPQA (Graduate-Level Google-Proof Q&A), a dataset of 448 multiple-choice questions in biology, physics, and chemistry written and validated by PhD-level domain experts. Questions are designed to resist web search: highly skilled non-expert validators with unrestricted web access and over 30 minutes per question reach only 34% accuracy.",
-    "metric": "Accuracy (percent of multiple-choice questions answered correctly)",
-    "higherIsBetter": true,
-    "tier": "core",
-    "sourceUrl": "https://arxiv.org/abs/2311.12022",
-    "canonicalSources": [
-      { "sourceType": "provider" },
-      { "sourceType": "paper" },
-      { "sourceType": "leaderboard" },
-      { "sourceType": "third-party" }
-    ],
-    "limitations": "Small evaluation set (198 questions), so differences of a few percentage points fall within noise. Public distribution creates a risk of training-data contamination. Coverage is limited to biology, physics, and chemistry. Expert PhD-level validators themselves reach only about 65% accuracy, so even skilled humans do not approach the ceiling.",
-    "evaluationSettingNotes": "Frontier Model providers typically self-report GPQA Diamond accuracy at a stated reasoning-effort level with their own sampling parameters (for example temperature and top-p); the number of shots is often unspecified in model cards. The original paper reports 0-shot and few-shot baselines for earlier models. The Evaluation setting recorded on each Score states the conditions its source actually reported."
-  },
-  {
     "id": "mmlu-pro",
     "name": "MMLU-Pro",
     "category": "knowledge",
-    "description": "A more robust and challenging multi-task language-understanding Benchmark extending MMLU: 12,032 questions across 14 disciplines with ten answer options instead of four, more reasoning-focused questions, and the trivial or noisy MMLU questions removed. Option sets were augmented with plausible distractors and reviewed by a panel of experts.",
-    "metric": "Accuracy (percent of multiple-choice questions answered correctly)",
+    "description": "MMLU-Pro is a more robust and challenging version of MMLU with 12,032 questions across 14 categories and ten answer options per question instead of four. It increases the share of reasoning-focused questions and removes trivial and noisy MMLU items, so chain-of-thought reasoning is required for strong performance and random-guess accuracy drops to roughly 10%.",
+    "metric": "accuracy, %",
     "higherIsBetter": true,
     "tier": "core",
-    "sourceUrl": "https://arxiv.org/abs/2406.01574",
+    "sourceUrl": "https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro",
     "canonicalSources": [
       { "sourceType": "paper" },
       { "sourceType": "provider" },
+      { "sourceType": "leaderboard", "urlPatterns": ["huggingface.co/spaces/TIGER-Lab/MMLU-Pro"] },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Public since May 2024, so contamination cannot be ruled out for later-trained models; a 2025-10-25 dataset note documents answer-key issues in some Health and Psychology questions (micro-average unaffected, per-category metrics slightly affected). Frontier Models cluster in the high 80s to low 90s: DeepSeek's frontier comparison table (DeepSeek-V4-Pro model card, retrieved 2026-11-26) reports 86.0–91.0 across six late-2026 Models.",
+    "evaluationSettingNotes": "The paper and official leaderboard standard is 5-shot CoT; several providers publish 0-shot CoT (the TIGER-Lab card notes 'Normally we use 5-shot, some models like Gemini use 0-shot'). PPL scoring is not used. 5-shot CoT and 0-shot CoT scores are not comparable."
+  },
+  {
+    "id": "mmlu",
+    "name": "MMLU",
+    "category": "knowledge",
+    "description": "MMLU (Measuring Massive Multitask Language Understanding) is a multiple-choice test of knowledge and problem-solving spanning 57 subjects across the humanities, social sciences, STEM, and other areas, with 14,042 test questions. Released in 2020, it measures the breadth of a model's academic and professional understanding.",
+    "metric": "accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://huggingface.co/datasets/cais/mmlu",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
       { "sourceType": "leaderboard" },
       { "sourceType": "third-party" }
     ],
-    "limitations": "Multiple-choice format rewards recognition over generation, and public distribution creates a contamination risk. Scores are much lower than on the original MMLU (16 to 33 points) and answer-key corrections have been issued repeatedly since release, so results from different eras are not perfectly comparable. The public leaderboard mixes entries run by its maintainers with results submitted by others.",
-    "evaluationSettingNotes": "The official evaluation normally uses 5-shot prompting, with some Providers reporting 0-shot; Chain-of-Thought reasoning scores up to about 20 points higher than direct answering on this Benchmark. The Evaluation setting recorded on each Score states the conditions its source actually reported."
+    "limitations": "Public since September 2020 and among the most-documented contaminated benchmarks (see 'Benchmark Data Contamination of Large Language Models: A Survey', arXiv:2406.04244); label errors motivated the MMLU-Redux re-annotation ('Are We Done with MMLU?', arXiv:2406.04127), which several providers now report alongside or instead of MMLU. Strongly saturated: DeepSeek-V3 (Dec 2024) already reports 87.1 (5-shot).",
+    "evaluationSettingNotes": "Provider tables almost always report 5-shot accuracy (e.g., DeepSeek-V3's card labels MMLU as 5-shot); 0-shot numbers also circulate. Record the shot count; 5-shot and 0-shot rows must not be mixed."
+  },
+  {
+    "id": "gpqa-diamond",
+    "name": "GPQA Diamond",
+    "category": "reasoning",
+    "description": "GPQA Diamond is the 198-question, highest-quality subset of GPQA, a benchmark of multiple-choice graduate-level science questions written and validated by PhD-level experts in biology, physics, and chemistry. The questions are 'Google-proof': skilled non-expert validators with over 30 minutes and unrestricted web access reached only 34% accuracy, while experts reached 65%.",
+    "metric": "pass@1 accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://github.com/idavidrein/gpqa",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Only 198 questions, so each question is ~0.5 points and run-to-run variance is high. The dataset is gated and canary-stringed to limit contamination, but gate-sharing and pretraining leakage remain possible. Frontier Models cluster in the low-to-mid 90s: the Kimi K3.1 Pro model card's comparison table (retrieved 2026-11-26) reports 91.7–96.1 across six late-2026 Models.",
+    "evaluationSettingNotes": "Providers typically publish 0-shot CoT pass@1, closed-book, no tools; the official harness also defines few-shot CoT and retrieval (open-book) settings, which are not comparable to closed-book numbers."
+  },
+  {
+    "id": "bbh",
+    "name": "BIG-Bench Hard (BBH)",
+    "category": "reasoning",
+    "description": "BIG-Bench Hard is a suite of 23 challenging tasks selected from BIG-Bench on which prior language models did not outperform average human raters, spanning logical, algorithmic, and multi-step reasoning (e.g., boolean expressions, tracking shuffled objects, causal judgement). Standard evaluation uses three-shot chain-of-thought prompting, reporting exact-match accuracy averaged across the 23 tasks.",
+    "metric": "exact match accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Public since October 2022, and BIG-Bench-family contamination is documented in the contamination-survey literature (arXiv:2406.04244). Largely saturated at the frontier: DeepSeek-V3 already reports 87.5 (3-shot EM). Answer-only prompting substantially underestimates capability, so CoT is part of the metric's meaning.",
+    "evaluationSettingNotes": "Standard is 3-shot CoT with the official cot-prompts (three exemplars per task); scores are averages across the 23 tasks. Few-shot answer-only variants exist and are not comparable."
+  },
+  {
+    "id": "math-500",
+    "name": "MATH-500",
+    "category": "math",
+    "description": "MATH-500 is the 500-problem test subset of the MATH competition-mathematics benchmark that OpenAI created for 'Let's Verify Step by Step' (the PRM800K math split). It measures competition-level mathematical problem solving with final-answer exact matching across subjects and difficulty levels.",
+    "metric": "exact match (pass@1), %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://huggingface.co/datasets/HuggingFaceH4/MATH-500",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Derived from a dataset public since 2021, so pretraining contamination is plausible; frontier reasoning models are near saturation (DeepSeek-V3 already reports 90.2 EM on its card). Only 500 problems, so granularity is 0.2 points.",
+    "evaluationSettingNotes": "Reasoning-model announcements typically report 0-shot CoT with final-answer match; the older MATH convention is 4-shot EM (DeepSeek's tables list MATH as 4-shot). Record the setting; 0-shot CoT and 4-shot numbers are not comparable."
+  },
+  {
+    "id": "aime-2025",
+    "name": "AIME 2025",
+    "category": "math",
+    "description": "AIME 2025 is the 2025 American Invitational Mathematics Examination, used as an LLM benchmark via its 30 problems (AIME I: 15, AIME II: 15), among the hardest widely reported math evaluations for frontier models. Scores are pass@1 accuracy over the 30 problems.",
+    "metric": "pass@1 accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://huggingface.co/datasets/yentinglin/aime_2025",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "third-party" },
+      { "sourceType": "leaderboard" }
+    ],
+    "limitations": "Only 30 problems (~3.3 points per problem), so single-run scores are extremely noisy; providers mitigate with repeated runs (DeepSeek's card notes that benchmarks with fewer than 1,000 samples are tested multiple times with varying temperature). Frontier reasoning models cluster at the top of the scale.",
+    "evaluationSettingNotes": "Typically 0-shot CoT pass@1. There is no official LLM leaderboard or defining paper; two community dataset compilations exist (yentinglin/aime_2025 and math-ai/aime25) — note which one a source used only if the source says so. Any consensus/majority-voting variant is a different setting and not comparable."
+  },
+  {
+    "id": "humaneval",
+    "name": "HumanEval",
+    "category": "coding",
+    "description": "HumanEval is OpenAI's hand-written evaluation set of 164 Python programming problems, each with a function signature, docstring, canonical solution, and unit tests, measuring functional correctness of programs synthesized from docstrings. It was introduced with the Codex paper and is scored by pass@k, most commonly pass@1.",
+    "metric": "pass@1, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://github.com/openai/human-eval",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "The official repository is marked 'Deprecated and unmaintained'. The dataset has been public since 2021 and its contamination is documented in the contamination-survey literature (arXiv:2406.04244); saturated for frontier models (DeepSeek-V3 reports 65.2 pass@1 0-shot, and DeepSeek-V4-Pro-Base already reports 76.8).",
+    "evaluationSettingNotes": "pass@1 with 0-shot prompting is the norm (DeepSeek's table: 'HumanEval (Pass@1) | 0-shot'); sampling parameters (greedy vs temperature, number of samples) vary across reports and affect pass@1."
+  },
+  {
+    "id": "livecodebench",
+    "name": "LiveCodeBench",
+    "category": "coding",
+    "description": "LiveCodeBench is a holistic and contamination-free coding benchmark that continuously collects new problems from LeetCode, AtCoder, and Codeforces competitions and publishes them in versioned time windows (currently release_v6: 1,055 problems from May 2023 to April 2025). Beyond code generation (pass@1), it probes self-repair, code execution, and test-output prediction.",
+    "metric": "pass@1, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://livecodebench.github.io/",
+    "canonicalSources": [
+      { "sourceType": "leaderboard", "urlPatterns": ["livecodebench.github.io"] },
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Contamination is mitigated by design (time-windowed collection), but different release versions and custom time windows are not comparable, and provider-reported scores sometimes use nonstandard windows. Self-repair/execution subtask scores are separate numbers from the pass@1 leaderboard metric.",
+    "evaluationSettingNotes": "pass@1 on a named release version (release_v1 through release_v6); provider tables distinguish 'Pass@1' and 'Pass@1-COT' (DeepSeek's card, both at 3-shot). Record version and variant; cross-version or cross-variant scores are not comparable."
+  },
+  {
+    "id": "swebench-verified",
+    "name": "SWE-bench Verified",
+    "category": "agentic",
+    "description": "SWE-bench Verified is a subset of 500 tasks from SWE-bench — real GitHub issues in Python repositories — human-validated for quality by OpenAI and the SWE-bench team. A system must locate and patch the code that resolves each issue; the score is the percentage of issues resolved (pass@1), typically produced with an agentic scaffold.",
+    "metric": "% issues resolved (pass@1)",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://www.swebench.com/",
+    "canonicalSources": [
+      { "sourceType": "leaderboard", "urlPatterns": ["swebench.com"] },
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Scores depend heavily on the agent scaffold, orchestration, and step budgets rather than the model alone; all tasks are Python repositories, so language coverage is narrow. Cross-scaffold comparisons conflate harness quality with model capability.",
+    "evaluationSettingNotes": "% resolved, pass@1, with an agent scaffold; scaffolds and compute budgets differ across reports (agentless, agentic, custom harnesses). The official leaderboard standardizes the harness, which is why it ranks first in canonical sources."
+  },
+  {
+    "id": "tau2-bench",
+    "name": "τ²-bench (tau2-bench)",
+    "category": "agentic",
+    "description": "τ²-bench is Sierra Research's benchmark for conversational agents in dual-control domains — retail, airline, and telecom — where both the agent and a simulated user act through tools in a shared, dynamic environment. It measures end-to-end task success (pass^1), testing reasoning, tool use, policy adherence, communication, and the ability to guide user actions.",
+    "metric": "pass^1 task success, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://github.com/sierra-research/tau2-bench",
+    "canonicalSources": [
+      { "sourceType": "leaderboard", "urlPatterns": ["taubench.com"] },
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Results depend on the user-simulator LLM, judge configuration, and domain (retail / airline / telecom), so only same-setup numbers are comparable. The benchmark family is evolving — taubench.com now also hosts τ³-Banking, τ-i18n, and voice variants — which can strand older scores.",
+    "evaluationSettingNotes": "pass^1 (first-attempt task success) per domain; providers typically quote a single domain. Record the domain alongside the score and compare only within a domain."
+  },
+  {
+    "id": "ifeval",
+    "name": "IFEval",
+    "category": "instruction-following",
+    "description": "IFEval (Instruction-Following Eval) is Google's benchmark of 541 prompts, each containing one or more of 25 types of verifiable instructions such as 'write in more than 400 words' or 'mention the keyword AI at least 3 times'. It measures adherence to explicit, machine-checkable constraints, reported as prompt-level and instruction-level accuracy in strict and loose variants.",
+    "metric": "prompt-level strict accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://github.com/google-research/google-research/tree/master/instruction_following_eval",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Four metric variants (prompt-level / instruction-level × strict / loose) circulate, fragmenting comparability when the variant is not recorded; some instruction types reward formatting skill (JSON output, bullet counts) more than semantic instruction following.",
+    "evaluationSettingNotes": "0-shot generation by design; record the metric variant (prompt-level strict is the headline number; loose and instruction-level variants also appear)."
+  },
+  {
+    "id": "hellaswag",
+    "name": "HellaSwag",
+    "category": "commonsense",
+    "description": "HellaSwag is a commonsense natural-language-inference benchmark: given an event description, a model must choose the most plausible continuation from four adversarially filtered, machine-generated endings. Built with Adversarial Filtering, it is trivial for humans (>95%) but was designed to be hard for models; the standard setting is 10-shot accuracy.",
+    "metric": "accuracy, %",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://huggingface.co/datasets/Rowan/hellaswag",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Saturated for modern models (DeepSeek-V3 reports 88.9 at 10-shot; Llama-3.1-405B 89.2 in the same table), so frontier discrimination is weak. The underlying ActivityNet/WikiHow text has been public since 2019, with contamination documented in the survey literature. Both raw accuracy (acc) and length-normalized accuracy (acc_norm) circulate and are not comparable.",
+    "evaluationSettingNotes": "Standard is 10-shot accuracy (DeepSeek's table convention: 'HellaSwag (Acc.) | 10-shot'); acc and acc_norm variants are both published. The original GitHub repository is unreachable, so the author-maintained HF dataset is the sourceUrl."
+  },
+  {
+    "id": "arc-agi-2",
+    "name": "ARC-AGI-2",
+    "category": "reasoning",
+    "description": "ARC-AGI-2 is the second iteration of the Abstraction and Reasoning Corpus: novel visual grid puzzles that require inducing transformation rules from a few examples and applying them to unseen inputs. It was designed to stress-test state-of-the-art reasoning systems and provide signal on AGI progress, and it remains far from saturation.",
+    "metric": "accuracy, % (semi-private evaluation set)",
+    "higherIsBetter": true,
+    "tier": "extended",
+    "sourceUrl": "https://arcprize.org/arc-agi/2/",
+    "canonicalSources": [
+      { "sourceType": "leaderboard", "urlPatterns": ["arcprize.org"] },
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Scores are reported separately for public and semi-private sets and by reasoning effort / thinking mode (leaderboard entries like 'Grok 4 (Thinking)'), so entries are only loosely comparable; mid-2025 leaderboard entries sit in the single digits to low tens on ARC-AGI-2. ARC-AGI-3 now exists on the same leaderboard and may supersede ARC-AGI-2.",
+    "evaluationSettingNotes": "Leaderboard entries are labeled by effort/thinking mode; providers typically quote semi-private accuracy at high reasoning effort. Record 'with thinking' or 'no thinking' in the evaluation setting."
+  },
+  {
+    "id": "ruler",
+    "name": "RULER",
+    "category": "long-context",
+    "description": "RULER is NVIDIA's synthetic long-context benchmark that generates configurable tasks across 13 task types in four categories (e.g., multi-key retrieval, variable tracking, aggregation) at chosen sequence lengths from 4K to 128K and beyond. It evaluates long-context capability beyond simple needle-in-a-haystack recall; results are accuracy percentages at each length, often summarized as an average or as 'effective context length'.",
+    "metric": "average accuracy at a fixed context length, %",
+    "higherIsBetter": true,
+    "tier": "extended",
+    "sourceUrl": "https://github.com/NVIDIA/ruler",
+    "canonicalSources": [
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard", "urlPatterns": ["github.com/NVIDIA/ruler", "nvidia.com"] },
+      { "sourceType": "provider" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Scores are length-dependent: only same-length numbers are comparable, and many published results quote 'effective context length' (a token count — out of scope for this percent-scale site). Provider self-reports are rare; most published numbers come from NVIDIA's own runs (paper and repo results table) or third parties. Synthetic tasks may not represent real long-document workloads.",
+    "evaluationSettingNotes": "Record the context length in the evaluation setting (e.g., '128k context'); accuracy at different lengths (4K/8K/16K/32K/64K/128K) is not comparable. 'Effective context length' figures must not be entered as Scores."
+  },
+  {
+    "id": "truthfulqa",
+    "name": "TruthfulQA",
+    "category": "robustness",
+    "description": "TruthfulQA measures whether models mimic human falsehoods: 817 questions across 38 categories (health, law, finance, politics, and other misconception-prone areas) crafted so that many humans answer falsely. The commonly reported metric, MC2, measures the probability mass a model assigns to the set of true answers in a multiple-choice setting.",
+    "metric": "MC2 accuracy, %",
+    "higherIsBetter": true,
+    "tier": "extended",
+    "sourceUrl": "https://github.com/sylinrl/TruthfulQA",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Designed against 2020-era models; aligned frontier models now score high, compressing differences. In January 2025 the authors introduced a revised two-option multiple-choice version and recommend it over MC1/MC2, while noting most models perform similarly on old and new versions. Generation-based metrics require a judge model and are not percent-comparable.",
+    "evaluationSettingNotes": "0-shot; MC2 is the commonly published metric, with MC1 and generation metrics also defined by the authors. Record the metric variant; old MC1/MC2 numbers and the 2025 two-option version should not be silently mixed."
+  },
+  {
+    "id": "mbpp",
+    "name": "MBPP",
+    "category": "coding",
+    "description": "MBPP (Mostly Basic Python Problems) contains around 1,000 crowd-sourced Python programming problems designed to be solvable by entry-level programmers, each with a task description, a reference solution, and 3 automated test cases. It measures basic program synthesis, scored by pass@1.",
+    "metric": "pass@1, %",
+    "higherIsBetter": true,
+    "tier": "extended",
+    "sourceUrl": "https://huggingface.co/datasets/google-research-datasets/mbpp",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Public since 2021, with contamination documented in the survey literature; saturated for strong models (DeepSeek-V3 reports 75.4 at 3-shot, later models higher). The authors hand-verified only a subset of the data, so label noise remains.",
+    "evaluationSettingNotes": "Standard is 3-shot pass@1 (DeepSeek's table convention: 'MBPP (Pass@1) | 3-shot'); 0-shot and 1-shot variants also circulate. Record the shot count."
+  },
+  {
+    "id": "winogrande",
+    "name": "WinoGrande",
+    "category": "commonsense",
+    "description": "WinoGrande is a large-scale adversarial Winograd-schema benchmark of pronoun-resolution problems with two options, crowdsourced at scale and filtered with the AFLite bias-reduction algorithm to remove examples solvable through spurious associations. It measures robust commonsense coreference reasoning; test-set labels are withheld for the official leaderboard, so published LLM numbers typically use the development split.",
+    "metric": "accuracy, %",
+    "higherIsBetter": true,
+    "tier": "extended",
+    "sourceUrl": "https://github.com/allenai/winogrande",
+    "canonicalSources": [
+      { "sourceType": "provider" },
+      { "sourceType": "paper" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Saturated near the top for modern models (DeepSeek-V3 reports 84.9 at 5-shot; DeepSeek-V2 86.3 in the same table). The dataset predates 2020 and Winograd-style contamination is documented in the survey literature. Fine-tuned leaderboard entries are not comparable with in-context LLM scores.",
+    "evaluationSettingNotes": "Provider tables typically report 5-shot accuracy on the dev split (DeepSeek's convention: 'WinoGrande (Acc.) | 5-shot'); 0-shot numbers also circulate. Record the shot count and split."
   }
 ]

@@ -20,24 +20,29 @@ const isoDate = z.iso.date();
 const sourceUrl = z.url();
 
 /** License: the coarse category of a Model's distribution terms. */
-export const LicenseSchema = z.enum(["proprietary", "open-weights", "open-source"]);
+export const LICENSE_VALUES = ["proprietary", "open-weights", "open-source"] as const;
+export const LicenseSchema = z.enum(LICENSE_VALUES);
 export type License = z.infer<typeof LicenseSchema>;
 
 /** Source type: the provenance class of a Score. */
 export const SourceTypeSchema = z.enum(["provider", "paper", "leaderboard", "third-party"]);
 export type SourceType = z.infer<typeof SourceTypeSchema>;
 
-/** Benchmark category: the agreed nine-value taxonomy (reconciled in ticket 03). */
+/**
+ * Benchmark category: the agreed nine-value taxonomy from the researched
+ * 17-Benchmark catalogue (notes/llm-bench/benchmarks.md, explorer 0-a).
+ * Every value is used by at least one Benchmark in the catalogue.
+ */
 export const BenchmarkCategorySchema = z.enum([
   "knowledge",
   "reasoning",
   "math",
   "coding",
   "instruction-following",
+  "agentic",
   "long-context",
   "commonsense",
   "robustness",
-  "agentic",
 ]);
 export type BenchmarkCategory = z.infer<typeof BenchmarkCategorySchema>;
 
