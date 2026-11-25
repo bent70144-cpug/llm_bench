@@ -161,7 +161,9 @@ describe("Benchmark detail pages (ticket 08)", () => {
       ensureBuilt();
       const indexHtml = readFileSync(path.join(DIST_DIR, "index.html"), "utf8");
       const assetFile = readdirSync(DIST_ASSETS)[0];
-      expect(assetFile).toBeDefined();
+      if (assetFile === undefined) {
+        throw new Error("no built assets found in apps/web/dist/assets");
+      }
 
       const server = await startSpaStaticServer(DIST_DIR);
       const base = `http://127.0.0.1:${server.port}`;
