@@ -910,10 +910,18 @@ export function buildViewExport(input: ViewExportInput): ViewExport {
   };
 }
 
-/** The CSV form of one value: missing values are "n/a", never empty or zero. */
+/**
+ * The CSV form of one value: missing values are "n/a", never empty or zero,
+ * and any field containing a comma, a double quote, or a line break is
+ * wrapped in double quotes with embedded quotes doubled — RFC 4180.
+ */
 function csvCell(value: string | number | null): string {
   if (value === null) return "n/a";
-  return String(value);
+  const text = String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  return text;
 }
 
 /**

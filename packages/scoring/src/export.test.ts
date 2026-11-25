@@ -305,4 +305,31 @@ describe("viewExportToCsv", () => {
       ].join("\r\n") + "\r\n",
     );
   });
+
+  it("quotes fields containing commas, quotes, or line breaks per RFC 4180", () => {
+    // A Model whose name and License name contain the characters that break
+    // naive CSV: commas, double quotes, and a line break. No real Model in
+    // the data package has these today; the serializer must still hold.
+    const tricky = makeModel({
+      id: "model-x",
+      name: 'Fancy "Model", Ltd',
+      licenseName: "Custom Terms,\nv2",
+    });
+    const view = buildViewExport({
+      rows: [tricky],
+      benchmarks: [makeBenchmark({ name: "Bench, One" })],
+      scores: [
+        makeScore({ modelId: "model-x", benchmarkId: "bench-1", value: 50 }),
+      ],
+      state: makeState({ benchmarkIds: ["bench-1"] }),
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    expect(viewExportToCsv(view)).toBe(
+      [
+        'Model id,Model name,Provider,License,License name,Context window,Release date,Input price / 1M,Output price / 1M,Reference inference provider,Average,Coverage,"Bench, One","Bench, One Source type","Bench, One source URL","Bench, One publishedDate","Bench, One retrievedDate"',
+        'model-x,"Fancy ""Model"", Ltd",Provider A,proprietary,"Custom Terms,\nv2",128000,2026-01-01,1.5,3,n/a,50,(1/1),50,provider,https://example.com/score,2026-01-01,2026-01-02',
+      ].join("\r\n") + "\r\n",
+    );
+  });
 });
