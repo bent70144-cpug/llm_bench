@@ -909,3 +909,81 @@ export function buildViewExport(input: ViewExportInput): ViewExport {
     rows: viewRows,
   };
 }
+
+/** The CSV form of one value: missing values are "n/a", never empty or zero. */
+function csvCell(value: string | number | null): string {
+  if (value === null) return "n/a";
+  return String(value);
+}
+
+/**
+ * Serializes a view export as RFC 4180 CSV: one header row, one row per
+ * exported Model in view order, CRLF record separators, and a final line
+ * break. Columns: the Model fields, the active aggregate (labelled "Average"
+ * or "Weighted Average" per the metadata), Coverage as (n/selected), then —
+ * per selected Benchmark, in catalogue order — the Primary score followed by
+ * its provenance companion columns `<Benchmark name> Source type`,
+ * `<Benchmark name> source URL`, `<Benchmark name> publishedDate`, and
+ * `<Benchmark name> retrievedDate`. Missing values are "n/a".
+ */
+export function viewExportToCsv(view: ViewExport): string {
+  const columns = view.metadata.selectedBenchmarks;
+  const header = [
+    "Model id",
+    "Model name",
+    "Provider",
+    "License",
+    "License name",
+    "Context window",
+    "Release date",
+    "Input price / 1M",
+    "Output price / 1M",
+    "Reference inference provider",
+    view.metadata.aggregate,
+    "Coverage",
+    ...columns.flatMap((benchmark) => [
+      benchmark.name,
+      `${benchmark.name} Source type`,
+      `${benchmark.name} source URL`,
+      `${benchmark.name} publishedDate`,
+      `${benchmark.name} retrievedDate`,
+    ]),
+  ];
+
+  const lines = [header.map(csvCell).join(",")];
+  for (const row of view.rows) {
+    const cells = [
+      row.model.id,
+      row.model.name,
+      row.model.provider,
+      row.model.license,
+      row.model.licenseName,
+      row.model.contextWindow,
+      row.model.releaseDate,
+      row.model.inputPricePer1M,
+      row.model.outputPricePer1M,
+      row.model.referenceInferenceProvider,
+      row.average,
+      formatCoverage({
+        average: row.average,
+        coverage: row.coverage.covered,
+        selected: row.coverage.selected,
+      }),
+      ...columns.flatMap((benchmark) => {
+        const score = row.scores[benchmark.id] ?? null;
+        return score === null
+          ? [null, null, null, null, null]
+          : [
+              score.value,
+              score.sourceType,
+              score.sourceUrl,
+              score.publishedDate,
+              score.retrievedDate,
+            ];
+      }),
+    ];
+    lines.push(cells.map(csvCell).join(","));
+  }
+
+  return `${lines.join("\r\n")}\r\n`;
+}

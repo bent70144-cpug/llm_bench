@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
 
-import { buildViewExport, type LeaderboardUrlState } from "./index";
+import {
+  buildViewExport,
+  viewExportToCsv,
+  type LeaderboardUrlState,
+} from "./index";
 
 /**
  * Ticket 12: the export builders are pure functions on the scoring seam —
@@ -249,5 +253,56 @@ describe("buildViewExport", () => {
     expect(view.metadata.rowCount).toBe(1);
     // Columns follow the selection: bench-2 is not a column, so no key for it.
     expect(Object.keys(view.rows[0]!.scores)).toEqual(["bench-1"]);
+  });
+});
+
+describe("viewExportToCsv", () => {
+  it("serializes the view: Model fields, aggregate, Coverage, then per-Benchmark score and provenance columns", () => {
+    const modelA = makeModel();
+    const modelB = makeModel({
+      id: "model-b",
+      name: "Model B",
+      license: "open-weights",
+      licenseName: "Apache-2.0",
+      inputPricePer1M: null,
+      outputPricePer1M: null,
+      referenceInferenceProvider: "Inference Co",
+    });
+    const scores: Score[] = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+      makeScore({
+        modelId: "model-a",
+        benchmarkId: "bench-2",
+        value: 90,
+        sourceType: "paper",
+        sourceUrl: "https://example.com/paper",
+        publishedDate: "2026-01-05",
+        retrievedDate: "2026-01-06",
+      }),
+      makeScore({
+        modelId: "model-b",
+        benchmarkId: "bench-2",
+        value: 60,
+        sourceType: "leaderboard",
+        sourceUrl: "https://example.com/leaderboard",
+      }),
+    ];
+    const view = buildViewExport({
+      rows: [modelA, modelB],
+      benchmarks: [makeBenchmark(), makeBenchmark({ id: "bench-2", name: "Bench 2" })],
+      scores,
+      state: makeState(),
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    // RFC 4180: CRLF record separators, a final line break, and every
+    // missing value as "n/a" — never an empty cell that could read as zero.
+    expect(viewExportToCsv(view)).toBe(
+      [
+        "Model id,Model name,Provider,License,License name,Context window,Release date,Input price / 1M,Output price / 1M,Reference inference provider,Average,Coverage,Bench 1,Bench 1 Source type,Bench 1 source URL,Bench 1 publishedDate,Bench 1 retrievedDate,Bench 2,Bench 2 Source type,Bench 2 source URL,Bench 2 publishedDate,Bench 2 retrievedDate",
+        "model-a,Model A,Provider A,proprietary,n/a,128000,2026-01-01,1.5,3,n/a,85,(2/2),80,provider,https://example.com/score,2026-01-01,2026-01-02,90,paper,https://example.com/paper,2026-01-05,2026-01-06",
+        "model-b,Model B,Provider A,open-weights,Apache-2.0,128000,2026-01-01,n/a,n/a,Inference Co,60,(1/2),n/a,n/a,n/a,n/a,n/a,60,leaderboard,https://example.com/leaderboard,2026-01-01,2026-01-02",
+      ].join("\r\n") + "\r\n",
+    );
   });
 });
