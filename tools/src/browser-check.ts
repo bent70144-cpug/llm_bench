@@ -2,21 +2,33 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Benchmark, Model, Score } from "@llm-bench/schema";
+import { LICENSE_VALUES, type Benchmark, type Model, type Score } from "@llm-bench/schema";
+import {
+  computeAverage,
+  defaultSelectedBenchmarkIds,
+  filterModels,
+  isUnderHalfCoverage,
+  rankModelsByAverage,
+  sortModelsByColumn,
+} from "@llm-bench/scoring";
 import { startSpaStaticServer } from "./lib/spa-static-server";
 
 /**
- * Ticket 08 browser check — the built static site in headless Chromium,
- * driven through real history-API navigation. This is deliberately a
- * SEPARATE script (`pnpm test:browser`), not part of `pnpm test`; wiring it
- * into CI is ticket 14.
+ * Browser check — the built static site in headless Chromium, driven
+ * through real history-API navigation. This is deliberately a SEPARATE
+ * script (`pnpm test:browser`), not part of `pnpm test`; wiring it into
+ * CI is ticket 14.
  *
- * Covers what the static bundle test cannot: direct navigation and refresh
- * on /benchmarks/<id> render the data-driven page, the leaderboard links to
- * every Benchmark page, unknown ids and unbuilt routes get their not-found
- * views, and the pages are keyboard-operable. Ticket 07 adds the Score
- * provenance checks: the tooltip and the Score details panel over the
- * leaderboard.
+ * Ticket 08 covers the Benchmark detail pages: direct navigation and
+ * refresh on /benchmarks/<id>, leaderboard links to every Benchmark page,
+ * unknown ids and unbuilt routes get their not-found views, and the pages
+ * are keyboard-operable. Ticket 07 adds the Score provenance checks: the
+ * tooltip and the Score details panel over the leaderboard.
+ *
+ * Ticket 05 covers the leaderboard's ranking and Coverage semantics: the
+ * default ranked view, the (n/selected) Coverage beside every Average, the
+ * Under 50% Coverage badge, instant recalculation on Benchmark toggles,
+ * composed filter+search+sort, and Primary-only displayed cells.
  *
  * Playwright is provided by the sandbox (1.57 + cached Chromium), not by
  * the workspace — its entry file is discovered below and can be overridden
@@ -36,9 +48,11 @@ interface LocatorLike {
   textContent(): Promise<string | null>;
   getAttribute(name: string): Promise<string | null>;
   click(): Promise<void>;
+  fill(value: string): Promise<void>;
   focus(): Promise<void>;
   hover(): Promise<void>;
   waitFor(options?: { state?: "attached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
+  locator(selector: string): LocatorLike;
 }
 
 interface PageLike {
@@ -431,6 +445,310 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     await page.keyboard.press("Escape");
     await dialog.waitFor({ state: "hidden" });
     check("Escape closes the no-alternates panel too", true);
+  });
+
+  // --- Ticket 05: the leaderboard's ranking and Coverage semantics ------
+
+  /** The Model names of the leaderboard rows, top to bottom. */
+  const rowNames = async (): Promise<string[]> => {
+    const rowCount = await page.locator("tbody tr").count();
+    const names: string[] = [];
+    for (let index = 0; index < rowCount; index++) {
+      names.push(
+        (await page.locator("tbody tr").nth(index).locator("th").first().textContent()) ?? "",
+      );
+    }
+    return names;
+  };
+
+  /** The full text of one Model's row, found by its Model name. */
+  const rowTextByName = async (modelName: string): Promise<string> => {
+    const rowCount = await page.locator("tbody tr").count();
+    for (let index = 0; index < rowCount; index++) {
+      const row = page.locator("tbody tr").nth(index);
+      const name = (await row.locator("th").first().textContent()) ?? "";
+      if (name === modelName) return (await row.textContent()) ?? "";
+    }
+    return "";
+  };
+
+  /**
+   * The text (and class) of one Benchmark cell of one Model's row:
+   * `benchmarkId` must be among the selected Benchmarks.
+   */
+  const benchmarkCell = async (
+    modelName: string,
+    benchmarkId: string,
+  ): Promise<{ text: string; className: string }> => {
+    const selection = defaultSelectedBenchmarkIds(catalogue);
+    const cellIndex =
+      7 + // the fixed Model-field cells after the row header (Provider … Coverage)
+      selection.indexOf(benchmarkId);
+    const rowCount = await page.locator("tbody tr").count();
+    for (let index = 0; index < rowCount; index++) {
+      const row = page.locator("tbody tr").nth(index);
+      const name = (await row.locator("th").first().textContent()) ?? "";
+      if (name === modelName) {
+        const cell = row.locator("td").nth(cellIndex);
+        return {
+          text: (await cell.textContent()) ?? "",
+          className: (await cell.getAttribute("class")) ?? "",
+        };
+      }
+    }
+    return { text: "", className: "" };
+  };
+
+  const selection = defaultSelectedBenchmarkIds(catalogue);
+  const leaderboardContext = { scores, benchmarkIds: selection };
+
+  await step("the leaderboard opens ranked by Average descending, every Average with its Coverage", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    const expected = rankModelsByAverage(models, leaderboardContext);
+    const rowCount = await page.locator("tbody tr").count();
+    check("every Model stays ranked — one row per Model", rowCount === models.length, `${rowCount} rows`);
+
+    const names = await rowNames();
+    check(
+      "row order is the ranking (Average desc; equal Averages by higher Coverage then name)",
+      JSON.stringify(names) === JSON.stringify(expected.map((model) => model.name)),
+      names.slice(0, 3).join(" | "),
+    );
+
+    check(
+      "the Average header announces the descending ranking",
+      (await page.locator('thead th:has-text("Average")').first().getAttribute("aria-sort")) ===
+        "descending",
+    );
+
+    // Every Average shows its Coverage as (n/selected); the leader leads
+    // with a single Score, so its Coverage must read (1/12) — with a badge.
+    const leader = expected[0]!;
+    const leaderAverage = computeAverage(leader.id, scores, { benchmarkIds: selection });
+    const leaderCell = await page.locator("tbody tr td.average-cell").first().textContent();
+    check(
+      "the leading Average carries its Coverage as (n/selected)",
+      leaderCell?.includes(`(${leaderAverage.coverage}/${leaderAverage.selected})`) === true,
+      leaderCell ?? "null",
+    );
+    check(
+      "the leading Model is badged for under 50% Coverage",
+      leaderCell?.includes("Under 50% Coverage") === true,
+      leaderCell ?? "null",
+    );
+
+    // The badge is computed from the Coverage fraction: exactly the
+    // under-50% Models carry it, and the exactly-50% boundary does not.
+    const expectedBadged = models.filter((model) =>
+      isUnderHalfCoverage(computeAverage(model.id, scores, { benchmarkIds: selection })),
+    );
+    const badgedCount = await page.locator("tbody .coverage-badge").count();
+    check(
+      "the badge appears on exactly the under-50% Models",
+      badgedCount === expectedBadged.length,
+      `${badgedCount} badges vs ${expectedBadged.length} expected`,
+    );
+
+    const boundary = models.find((model) => {
+      const result = computeAverage(model.id, scores, { benchmarkIds: selection });
+      return 2 * result.coverage === result.selected;
+    });
+    if (boundary !== undefined) {
+      const boundaryResult = computeAverage(boundary.id, scores, { benchmarkIds: selection });
+      const boundaryRow = await rowTextByName(boundary.name);
+      check(
+        `the exactly-50% Model (${boundary.name}) shows (n/selected) without the badge`,
+        boundaryRow.includes(`(${boundaryResult.coverage}/${selection.length})`) &&
+          !boundaryRow.includes("Under 50% Coverage"),
+        boundaryRow.slice(0, 80),
+      );
+    }
+
+    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    check(
+      "the footer states the number of Benchmarks used",
+      footer.includes(`Average over ${selection.length} selected Benchmarks`),
+      footer.slice(0, 80),
+    );
+  });
+
+  await step("toggling a Benchmark recalculates the ranking and the footer instantly", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // The leader's only selected Benchmark: unchecking it must drop the
+    // leader to the null-Average group (bottom of the ranking).
+    const ranked = rankModelsByAverage(models, leaderboardContext);
+    const sparseLeader =
+      ranked.find((model) => {
+        const result = computeAverage(model.id, scores, { benchmarkIds: selection });
+        return result.coverage === 1;
+      }) ?? ranked[0]!;
+    const leaderBenchmarkId = scores.find(
+      (score) =>
+        score.isPrimary &&
+        score.modelId === sparseLeader.id &&
+        selection.includes(score.benchmarkId),
+    )!.benchmarkId;
+
+    const checkboxIndex = catalogue.findIndex((benchmark) => benchmark.id === leaderBenchmarkId);
+    const narrowedSelection = selection.filter((id) => id !== leaderBenchmarkId);
+    const narrowedContext = { scores, benchmarkIds: narrowedSelection };
+    const expectedNarrowed = rankModelsByAverage(models, narrowedContext);
+
+    await page
+      .locator("fieldset.benchmarks-selection label")
+      .nth(checkboxIndex)
+      .locator("input")
+      .click();
+
+    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    check(
+      "the footer recounts the selected Benchmarks without a reload",
+      footer.includes(`Average over ${narrowedSelection.length} selected Benchmarks`),
+      footer.slice(0, 80),
+    );
+
+    const names = await rowNames();
+    check(
+      "the ranking recalculates instantly over the narrower selection",
+      JSON.stringify(names) === JSON.stringify(expectedNarrowed.map((model) => model.name)),
+      names.slice(0, 3).join(" | "),
+    );
+
+    const leaderRow = await rowTextByName(sparseLeader.name);
+    check(
+      "the Model that lost its only Benchmark shows n/a with (0/n) — never zero — and the badge",
+      leaderRow.includes("n/a") &&
+        leaderRow.includes(`(0/${narrowedSelection.length})`) &&
+        leaderRow.includes("Under 50% Coverage"),
+      leaderRow.slice(0, 90),
+    );
+
+    // Toggling the Benchmark back restores the original ranking.
+    await page
+      .locator("fieldset.benchmarks-selection label")
+      .nth(checkboxIndex)
+      .locator("input")
+      .click();
+    const restoredNames = await rowNames();
+    check(
+      "toggling the Benchmark back restores the ranking",
+      JSON.stringify(restoredNames) === JSON.stringify(ranked.map((model) => model.name)),
+    );
+  });
+
+  await step("search, License, price, and Context window filters compose with column sorting", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // Every expected list is computed from the data package via the
+    // scoring package, so the check proves the UI applies the same
+    // pipeline (filter → search → rank/sort), not a hardcoded list.
+    const query = {
+      search: "claude",
+      licenses: ["proprietary"] as const,
+      minContextWindow: 500_000,
+    };
+    const shortlist = filterModels(models, query);
+    check("the composed fixture keeps a shortlist of Models", shortlist.length >= 2);
+
+    await page.locator('input[type="search"]').fill(query.search);
+    await page
+      .locator('fieldset:has(legend:text-is("License")) label')
+      .nth(LICENSE_VALUES.indexOf("proprietary"))
+      .locator("input")
+      .click();
+    await page.locator('input[type="number"]').nth(0).fill(String(query.minContextWindow));
+
+    let names = await rowNames();
+    check(
+      "search + License + Context window filter together, then rank",
+      JSON.stringify(names) ===
+        JSON.stringify(rankModelsByAverage(shortlist, leaderboardContext).map((model) => model.name)),
+      names.join(" | "),
+    );
+
+    // Sorting the filtered shortlist by a Benchmark column reorders it.
+    const tau2 = catalogue.find((benchmark) => benchmark.id === "tau2-bench");
+    if (tau2 !== undefined) {
+      await page.locator(`thead button[aria-label="Sort by ${tau2.name}"]`).click();
+      names = await rowNames();
+      check(
+        "a Benchmark-column sort applies to the filtered shortlist",
+        JSON.stringify(names) ===
+          JSON.stringify(
+            sortModelsByColumn(shortlist, { column: "tau2-bench", direction: "asc" }, leaderboardContext).map(
+              (model) => model.name,
+            ),
+          ),
+        names.join(" | "),
+      );
+
+      // Adding the price ceiling narrows the composed result further.
+      await page.locator('input[type="number"]').nth(1).fill("4");
+      const withPriceCeiling = filterModels(models, { ...query, maxInputPricePer1M: 4 });
+      names = await rowNames();
+      check(
+        "the price ceiling composes with search, License, Context window, and the sort",
+        JSON.stringify(names) ===
+          JSON.stringify(
+            sortModelsByColumn(
+              withPriceCeiling,
+              { column: "tau2-bench", direction: "asc" },
+              leaderboardContext,
+            ).map((model) => model.name),
+          ),
+        names.join(" | "),
+      );
+      check("the price ceiling narrowed the shortlist", (await page.locator("tbody tr").count()) < shortlist.length);
+    }
+  });
+
+  await step("only Primary scores feed the displayed cells and the best-Score highlight", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // Claude Opus 4.5 on SWE-bench Verified: the Primary score is the
+    // leaderboard's 74.4; its higher provider alternates (80.9 / 80.6)
+    // must not display or feed anything.
+    const opusPrimary = scores.find(
+      (score) =>
+        score.isPrimary &&
+        score.modelId === "claude-opus-4-5" &&
+        score.benchmarkId === "swebench-verified",
+    );
+    if (opusPrimary === undefined) {
+      check("data has Claude Opus 4.5 on SWE-bench Verified", false);
+      return;
+    }
+    const opusCell = await benchmarkCell("Claude Opus 4.5", "swebench-verified");
+    check(
+      "the displayed Score is the Primary score, not a higher alternate setting",
+      opusCell.text === String(opusPrimary.value),
+      opusCell.text,
+    );
+
+    // The highlighted best Score per Benchmark is the best PRIMARY score.
+    const swebenchPrimaries = scores.filter(
+      (score) => score.isPrimary && score.benchmarkId === "swebench-verified",
+    );
+    const best = Math.max(...swebenchPrimaries.map((score) => score.value));
+    const bestModel = models.find(
+      (model) =>
+        swebenchPrimaries.find((score) => score.modelId === model.id && score.value === best) !==
+        undefined,
+    );
+    if (bestModel !== undefined) {
+      const bestCell = await benchmarkCell(bestModel.name, "swebench-verified");
+      check(
+        "the best-Score highlight marks the best Primary score",
+        bestCell.className.includes("best") && bestCell.text === String(best),
+        `${bestModel.name}: "${bestCell.text}" class="${bestCell.className}"`,
+      );
+    }
   });
 }
 

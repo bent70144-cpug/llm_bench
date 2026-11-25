@@ -67,6 +67,25 @@ export function primaryScores(scores: readonly Score[]): Score[] {
 }
 
 /**
+ * The Coverage display form "(n/selected)": every Average is shown with
+ * its Coverage count against the number of selected Benchmarks.
+ */
+export function formatCoverage(result: AverageResult): string {
+  return `(${result.coverage}/${result.selected})`;
+}
+
+/**
+ * Whether a Model's Coverage is strictly under 50% of the selected
+ * Benchmarks — the condition for the "Under 50% Coverage" badge. Exactly
+ * 50% is NOT under and is never badged; with no Benchmark selected there
+ * is no Coverage to be under, so it is false as well.
+ */
+export function isUnderHalfCoverage(result: AverageResult): boolean {
+  if (result.selected <= 0) return false;
+  return 2 * result.coverage < result.selected;
+}
+
+/**
  * Returns the Primary score for one Model and Benchmark pair, or undefined
  * when the Model has no Primary score for it (rendered as "n/a", never 0).
  */
@@ -185,8 +204,82 @@ export interface LeaderboardContext {
   benchmarkIds: readonly string[];
 }
 
+/**
+ * The leaderboard ranking: Models ordered by Average descending. Equal
+ * Averages break by higher Coverage, then by Model name ascending
+ * (case-insensitive), so the order is deterministic and defensible.
+ * null-Average Models — no Primary score among the selected Benchmarks —
+ * sort last, below every scored Model, ordered by name ascending among
+ * themselves. Only Primary scores feed the ranking, and Coverage is
+ * counted against the active Benchmark selection.
+ */
+export function rankModelsByAverage(
+  models: readonly Model[],
+  context: LeaderboardContext,
+): Model[] {
+  const results = new Map<string, AverageResult>();
+  for (const model of models) {
+    results.set(
+      model.id,
+      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
+    );
+  }
+  return [...models].sort((left, right) => compareForRanking(left, right, results));
+}
+
+/** The ranking chain after the primary comparison ties: Coverage desc, name asc. */
+function compareForRanking(
+  left: Model,
+  right: Model,
+  results: ReadonlyMap<string, AverageResult>,
+): number {
+  const leftResult = results.get(left.id);
+  const rightResult = results.get(right.id);
+  const leftAverage = leftResult?.average ?? null;
+  const rightAverage = rightResult?.average ?? null;
+
+  // null Averages sort last, below every scored Model, by name among themselves.
+  if (leftAverage === null && rightAverage === null) return compareModelNames(left, right);
+  if (leftAverage === null) return 1;
+  if (rightAverage === null) return -1;
+  if (leftAverage !== rightAverage) return rightAverage - leftAverage;
+
+  const leftCoverage = leftResult?.coverage ?? 0;
+  const rightCoverage = rightResult?.coverage ?? 0;
+  if (leftCoverage !== rightCoverage) return rightCoverage - leftCoverage;
+
+  return compareModelNames(left, right);
+}
+
+/** Case-insensitive Model name comparison for deterministic ordering. */
+function compareModelNames(left: Model, right: Model): number {
+  const a = left.name.toLowerCase();
+  const b = right.name.toLowerCase();
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** The sortable value of one column for one Model; null means missing. */
 type ColumnValue = string | number | null;
+
+/** The fixed Model-field columns a header can sort by. */
+const MODEL_COLUMN_IDS: ReadonlySet<string> = new Set<string>([
+  "model-name",
+  "provider",
+  "license",
+  "context-window",
+  "input-price",
+  "output-price",
+  "average",
+  "coverage",
+]);
+
+/**
+ * Whether a column's values come from Scores (the Average or a Benchmark's
+ * Primary score) — the columns whose ties break by the ranking chain.
+ */
+function isScoreColumn(column: SortColumn): boolean {
+  return column === "average" || !MODEL_COLUMN_IDS.has(column);
+}
 
 function columnValueFor(model: Model, column: SortColumn, context: LeaderboardContext): ColumnValue {
   switch (column) {
@@ -234,8 +327,13 @@ function compareColumnValues(a: ColumnValue, b: ColumnValue, direction: SortDire
 
 /**
  * Sorts the Models by any leaderboard column — a Model field column or a
- * Benchmark column (by its Primary scores). Ties keep the data-package
- * order (stable), and missing values always sort last in both directions.
+ * Benchmark column (by its Primary scores). Missing values always sort
+ * last in both directions — "n/a" is never treated as zero.
+ *
+ * Ties on the Average column and on Benchmark columns break by the ranking
+ * chain (higher Coverage, then Model name ascending), in both directions,
+ * so those orders are deterministic; ties on Model-field columns keep the
+ * data-package order (stable).
  */
 export function sortModelsByColumn(
   models: readonly Model[],
@@ -246,13 +344,33 @@ export function sortModelsByColumn(
   for (const model of models) {
     values.set(model.id, columnValueFor(model, sort.column, context));
   }
-  return [...models].sort((left, right) =>
-    compareColumnValues(
+  const averageResults = isScoreColumn(sort.column)
+    ? averageResultsFor(models, context)
+    : null;
+  return [...models].sort((left, right) => {
+    const comparison = compareColumnValues(
       values.get(left.id) ?? null,
       values.get(right.id) ?? null,
       sort.direction,
-    ),
-  );
+    );
+    if (comparison !== 0 || averageResults === null) return comparison;
+    return compareForRanking(left, right, averageResults);
+  });
+}
+
+/** The Average and Coverage of every Model over the selection, for tie-breaks. */
+function averageResultsFor(
+  models: readonly Model[],
+  context: LeaderboardContext,
+): ReadonlyMap<string, AverageResult> {
+  const results = new Map<string, AverageResult>();
+  for (const model of models) {
+    results.set(
+      model.id,
+      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
+    );
+  }
+  return results;
 }
 
 /** Search and filter criteria for the Model list. Empty fields match all. */
