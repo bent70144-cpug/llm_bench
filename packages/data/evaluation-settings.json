@@ -1,0 +1,6 @@
+[
+  {
+    "name": "Max reasoning effort (temperature 1.0, top-p 0.95)",
+    "description": "Results produced with reasoning effort set to max, temperature 1.0, and top-p 0.95, as stated in the Kimi K3.1 Pro model card."
+  }
+]

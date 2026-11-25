@@ -1,0 +1,20 @@
+[
+  {
+    "id": "gpqa-diamond",
+    "name": "GPQA Diamond",
+    "category": "reasoning",
+    "description": "The 198-question hardest and highest-quality subset of GPQA (Graduate-Level Google-Proof Q&A), a dataset of 448 multiple-choice questions in biology, physics, and chemistry written and validated by PhD-level domain experts. Questions are designed to resist web search: highly skilled non-expert validators with unrestricted web access and over 30 minutes per question reach only 34% accuracy.",
+    "metric": "Accuracy (percent of multiple-choice questions answered correctly)",
+    "higherIsBetter": true,
+    "tier": "core",
+    "sourceUrl": "https://arxiv.org/abs/2311.12022",
+    "canonicalSources": [
+      { "sourceType": "paper" },
+      { "sourceType": "provider" },
+      { "sourceType": "leaderboard" },
+      { "sourceType": "third-party" }
+    ],
+    "limitations": "Small evaluation set (198 questions), so differences of a few percentage points fall within noise. Public distribution creates a risk of training-data contamination. Coverage is limited to biology, physics, and chemistry. Expert PhD-level validators themselves reach only about 65% accuracy, so even skilled humans do not approach the ceiling.",
+    "evaluationSettingNotes": "Frontier Model providers typically self-report GPQA Diamond accuracy at a stated reasoning-effort level with their own sampling parameters (for example temperature and top-p); the number of shots is often unspecified in model cards. The original paper reports 0-shot and few-shot baselines for earlier models. The Evaluation setting recorded on each Score states the conditions its source actually reported."
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "modelId": "kimi-k3-1-pro",
+    "benchmarkId": "gpqa-diamond",
+    "value": 94.2,
+    "evaluationSetting": "Max reasoning effort (temperature 1.0, top-p 0.95)",
+    "sourceType": "provider",
+    "sourceUrl": "https://huggingface.co/moonshotai/Kimi-K3.1-Pro",
+    "publishedDate": "2026-11-02",
+    "retrievedDate": "2026-11-26",
+    "verified": true,
+    "isPrimary": true
+  }
+]

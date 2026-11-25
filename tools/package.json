@@ -1,0 +1,23 @@
+{
+  "name": "tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "tsx src/validate-data.ts",
+    "lint": "eslint . && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-bench/schema": "workspace:*",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@llm-bench/config": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.2"
+  }
+}

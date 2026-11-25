@@ -1,0 +1,22 @@
+{
+  "name": "@llm-bench/scoring",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint . && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-bench/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@llm-bench/config": "workspace:*",
+    "eslint": "^9.39.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.2"
+  }
+}
