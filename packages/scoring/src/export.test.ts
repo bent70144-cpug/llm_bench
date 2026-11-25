@@ -4,6 +4,7 @@ import type { Benchmark, Model, Score } from "@llm-bench/schema";
 import {
   buildFullDatasetExport,
   buildViewExport,
+  exportFilename,
   viewExportToCsv,
   type LeaderboardUrlState,
 } from "./index";
@@ -420,5 +421,14 @@ describe("buildFullDatasetExport", () => {
     expect(exported.scores).toContainEqual(
       expect.objectContaining({ isPrimary: false, evaluationSetting: "0-shot", value: 70 }),
     );
+  });
+});
+
+describe("exportFilename", () => {
+  it("derives dated download filenames from the export kind and timestamp", () => {
+    const exportedAt = "2026-11-26T10:30:00.000Z";
+    expect(exportFilename("view-csv", exportedAt)).toBe("llm-bench-view-2026-11-26.csv");
+    expect(exportFilename("view-json", exportedAt)).toBe("llm-bench-view-2026-11-26.json");
+    expect(exportFilename("dataset-json", exportedAt)).toBe("llm-bench-dataset-2026-11-26.json");
   });
 });

@@ -1039,3 +1039,24 @@ export function buildFullDatasetExport(input: FullDatasetExportInput): FullDatas
     scores: input.scores,
   };
 }
+
+/** Which export a download filename is built for. */
+export type ExportKind = "view-csv" | "view-json" | "dataset-json";
+
+/**
+ * The download filename of an export: `llm-bench-view-2026-11-26.csv`,
+ * `llm-bench-view-2026-11-26.json`, or `llm-bench-dataset-2026-11-26.json`.
+ * The date is the `exportedAt` timestamp's ISO date part, so a saved file
+ * identifies the day it was taken. Expects an ISO 8601 `exportedAt`.
+ */
+export function exportFilename(kind: ExportKind, exportedAt: string): string {
+  const date = exportedAt.slice(0, 10);
+  switch (kind) {
+    case "view-csv":
+      return `llm-bench-view-${date}.csv`;
+    case "view-json":
+      return `llm-bench-view-${date}.json`;
+    case "dataset-json":
+      return `llm-bench-dataset-${date}.json`;
+  }
+}
