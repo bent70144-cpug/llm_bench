@@ -672,6 +672,191 @@ describe("rankModelsByAverage", () => {
   });
 });
 
+describe("ranking on the active aggregate (Weighted Average when weights are active)", () => {
+  /**
+   * Hand-computed weighted ranking fixtures. Selection: bench-1, bench-2.
+   *
+   * - model-p "P Model"     bench-1 90, bench-2 70
+   * - model-q "Q Model"     bench-1 70, bench-2 90
+   * - model-s "S Model"     bench-1 90 (sparse: only the double-weightable Benchmark)
+   * - model-z "Z Model"     bench-2 60
+   *
+   * Weights {bench-1: 2, bench-2: 1}: P = 250/3 ≈ 83.33, Q = 230/3 ≈ 76.67,
+   * S = 90 (2·90/2 — not penalized for missing bench-2), Z = 60.
+   * Weights {bench-1: 1, bench-2: 2}: P = 230/3, Q = 250/3 — P and Q swap.
+   */
+  const weightedRankingModels: Model[] = [
+    makeModel({ id: "model-p", name: "P Model" }),
+    makeModel({ id: "model-q", name: "Q Model" }),
+    makeModel({ id: "model-s", name: "S Model" }),
+    makeModel({ id: "model-z", name: "Z Model" }),
+  ];
+  const weightedRankingScores: Score[] = [
+    makeScore({ modelId: "model-p", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-p", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-2", value: 90 }),
+    makeScore({ modelId: "model-s", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-z", benchmarkId: "bench-2", value: 60 }),
+  ];
+
+  it("ranks by the Weighted Average when weights are active on the selection", () => {
+    const ranked = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-s", // 90 over its only covered Benchmark
+      "model-p", // 250/3 ≈ 83.33
+      "model-q", // 230/3 ≈ 76.67
+      "model-z", // 60
+    ]);
+  });
+
+  it("swapping the weights reorders the Models", () => {
+    const ranked = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-s", // 90
+      "model-q", // 250/3 — now above P
+      "model-p", // 230/3
+      "model-z", // 60
+    ]);
+  });
+
+  it("ranks identically to the plain Average when the weights are all default", () => {
+    const plain = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+    });
+    const withDefaults = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 1 },
+    });
+    // A weight on an unselected Benchmark is remembered but inactive.
+    const withInactive = rankModelsByAverage(weightedRankingModels, {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-3": 5 },
+    });
+
+    expect(withDefaults.map((model) => model.id)).toEqual(plain.map((model) => model.id));
+    expect(withInactive.map((model) => model.id)).toEqual(plain.map((model) => model.id));
+  });
+
+  it("applies the same tie-break chain and null-aggregate ordering to the Weighted Average", () => {
+    // Weights {bench-1: 1, bench-2: 0}: bench-2 is excluded from the
+    // aggregate, so the Weighted Average is each Model's bench-1 score while
+    // Coverage still counts both Benchmarks.
+    //
+    // - model-alpha "alpha model" bench-1 90, bench-2 50 → 90, Coverage 2
+    // - model-pair  "Pair Model"  bench-1 90, bench-2 70 → 90, Coverage 2
+    // - model-solo  "Solo Model"  bench-1 90             → 90, Coverage 1
+    // - model-low   "Low Model"   bench-1 70, bench-2 90 → 70
+    // - model-excl  "Excluded"    bench-2 90             → null (its only
+    //   covered Benchmark carries weight 0) — sorts last, never zero.
+    const tieModels: Model[] = [
+      makeModel({ id: "model-pair", name: "Pair Model" }),
+      makeModel({ id: "model-solo", name: "Solo Model" }),
+      makeModel({ id: "model-low", name: "Low Model" }),
+      makeModel({ id: "model-excl", name: "Excluded Model" }),
+      makeModel({ id: "model-alpha", name: "alpha model" }),
+    ];
+    const tieScores: Score[] = [
+      makeScore({ modelId: "model-pair", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-pair", benchmarkId: "bench-2", value: 70 }),
+      makeScore({ modelId: "model-solo", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-low", benchmarkId: "bench-1", value: 70 }),
+      makeScore({ modelId: "model-low", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-excl", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-alpha", benchmarkId: "bench-1", value: 90 }),
+      makeScore({ modelId: "model-alpha", benchmarkId: "bench-2", value: 50 }),
+    ];
+    const context = {
+      scores: tieScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 0 },
+    };
+
+    const ranked = rankModelsByAverage(tieModels, context);
+    expect(ranked.map((model) => model.id)).toEqual([
+      "model-alpha", // 90, Coverage 2, "alpha model"
+      "model-pair", // 90, Coverage 2, "Pair Model" — name after "alpha model"
+      "model-solo", // 90, Coverage 1 — loses the tie by lower Coverage
+      "model-low", // 70
+      "model-excl", // null Weighted Average — last, below every scored Model
+    ]);
+
+    // The Average-column sort descending is exactly the ranking, weights
+    // included — the identity the leaderboard UI relies on.
+    const sorted = sortModelsByColumn(tieModels, { column: "average", direction: "desc" }, context);
+    expect(sorted.map((model) => model.id)).toEqual(ranked.map((model) => model.id));
+  });
+
+  it("sorts the Average column ascending under weights, null aggregates still last", () => {
+    const context = {
+      scores: weightedRankingScores,
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    };
+    const asc = sortModelsByColumn(
+      weightedRankingModels,
+      { column: "average", direction: "asc" },
+      context,
+    );
+
+    expect(asc.map((model) => model.id)).toEqual([
+      "model-z", // 60
+      "model-q", // 230/3
+      "model-p", // 250/3
+      "model-s", // 90
+    ]);
+  });
+
+  it("breaks Benchmark-column ties by the weighted ranking chain when weights are active", () => {
+    // Sorting by the bench-1 column under weights {bench-1: 1, bench-2: 0}:
+    // the 90 ties break by the Weighted Average chain (Coverage, then name),
+    // not by the plain Average.
+    const tieContext = {
+      scores: [
+        makeScore({ modelId: "model-pair", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-pair", benchmarkId: "bench-2", value: 70 }),
+        makeScore({ modelId: "model-solo", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-low", benchmarkId: "bench-1", value: 70 }),
+        makeScore({ modelId: "model-low", benchmarkId: "bench-2", value: 90 }),
+        makeScore({ modelId: "model-excl", benchmarkId: "bench-2", value: 90 }),
+        makeScore({ modelId: "model-alpha", benchmarkId: "bench-1", value: 90 }),
+        makeScore({ modelId: "model-alpha", benchmarkId: "bench-2", value: 50 }),
+      ],
+      benchmarkIds: ["bench-1", "bench-2"],
+      weights: { "bench-1": 1, "bench-2": 0 },
+    };
+    const models = [
+      makeModel({ id: "model-pair", name: "Pair Model" }),
+      makeModel({ id: "model-solo", name: "Solo Model" }),
+      makeModel({ id: "model-low", name: "Low Model" }),
+      makeModel({ id: "model-excl", name: "Excluded Model" }),
+      makeModel({ id: "model-alpha", name: "alpha model" }),
+    ];
+
+    const desc = sortModelsByColumn(models, { column: "bench-1", direction: "desc" }, tieContext);
+    expect(desc.map((model) => model.id)).toEqual([
+      "model-alpha", // 90 tie → Weighted Average 90, Coverage 2
+      "model-pair", // 90 tie → Weighted Average 90, Coverage 2, name after
+      "model-solo", // 90 tie → Weighted Average 90, Coverage 1
+      "model-low", // 70
+      "model-excl", // missing on bench-1 — last, never zero
+    ]);
+  });
+});
+
 describe("formatCoverage", () => {
   it("renders the Coverage display form (n/selected)", () => {
     expect(formatCoverage({ average: 85, coverage: 2, selected: 3 })).toBe("(2/3)");

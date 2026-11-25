@@ -288,28 +288,31 @@ export interface LeaderboardContext {
   scores: readonly Score[];
   /** The selected Benchmark ids the Average and Coverage are computed over. */
   benchmarkIds: readonly string[];
+  /**
+   * Visitor-assigned per-Benchmark weights. When any weight is non-default
+   * (≠ 1) on the selection, the ranking, the Average column, and the
+   * tie-break chain operate on the Weighted Average — the active aggregate.
+   * Missing or all-default weights keep the plain Average.
+   */
+  weights?: BenchmarkWeights;
 }
 
 /**
- * The leaderboard ranking: Models ordered by Average descending. Equal
- * Averages break by higher Coverage, then by Model name ascending
+ * The leaderboard ranking: Models ordered by the active aggregate — the
+ * Weighted Average when `context.weights` are active on the selection
+ * (any selected Benchmark weighted ≠ 1), the plain Average otherwise.
+ * Equal aggregates break by higher Coverage, then by Model name ascending
  * (case-insensitive), so the order is deterministic and defensible.
- * null-Average Models — no Primary score among the selected Benchmarks —
- * sort last, below every scored Model, ordered by name ascending among
- * themselves. Only Primary scores feed the ranking, and Coverage is
- * counted against the active Benchmark selection.
+ * null-aggregate Models — no weighted contribution among the selected
+ * Benchmarks — sort last, below every scored Model, ordered by name
+ * ascending among themselves. Only Primary scores feed the ranking, and
+ * Coverage is counted against the active Benchmark selection.
  */
 export function rankModelsByAverage(
   models: readonly Model[],
   context: LeaderboardContext,
 ): Model[] {
-  const results = new Map<string, AverageResult>();
-  for (const model of models) {
-    results.set(
-      model.id,
-      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
-    );
-  }
+  const results = aggregateResultsFor(models, context);
   return [...models].sort((left, right) => compareForRanking(left, right, results));
 }
 
@@ -382,9 +385,9 @@ function columnValueFor(model: Model, column: SortColumn, context: LeaderboardCo
     case "output-price":
       return model.outputPricePer1M;
     case "average":
-      return computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }).average;
+      return aggregateResultFor(model.id, context).average;
     case "coverage":
-      return computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }).coverage;
+      return aggregateResultFor(model.id, context).coverage;
     default:
       // Any other column id is a Benchmark id; missing Scores sort last.
       return primaryScoreFor(model.id, column, context.scores)?.value ?? null;
@@ -419,7 +422,9 @@ function compareColumnValues(a: ColumnValue, b: ColumnValue, direction: SortDire
  * Ties on the Average column and on Benchmark columns break by the ranking
  * chain (higher Coverage, then Model name ascending), in both directions,
  * so those orders are deterministic; ties on Model-field columns keep the
- * data-package order (stable).
+ * data-package order (stable). When `context.weights` are active on the
+ * selection, the Average column and the tie-break chain operate on the
+ * Weighted Average — the active aggregate.
  */
 export function sortModelsByColumn(
   models: readonly Model[],
@@ -430,8 +435,8 @@ export function sortModelsByColumn(
   for (const model of models) {
     values.set(model.id, columnValueFor(model, sort.column, context));
   }
-  const averageResults = isScoreColumn(sort.column)
-    ? averageResultsFor(models, context)
+  const aggregateResults = isScoreColumn(sort.column)
+    ? aggregateResultsFor(models, context)
     : null;
   return [...models].sort((left, right) => {
     const comparison = compareColumnValues(
@@ -439,22 +444,31 @@ export function sortModelsByColumn(
       values.get(right.id) ?? null,
       sort.direction,
     );
-    if (comparison !== 0 || averageResults === null) return comparison;
-    return compareForRanking(left, right, averageResults);
+    if (comparison !== 0 || aggregateResults === null) return comparison;
+    return compareForRanking(left, right, aggregateResults);
   });
 }
 
-/** The Average and Coverage of every Model over the selection, for tie-breaks. */
-function averageResultsFor(
+/** The active aggregate of one Model: Weighted Average when the context's weights are active. */
+function aggregateResultFor(modelId: string, context: LeaderboardContext): AverageResult {
+  const { weights } = context;
+  if (weights !== undefined && weightsAreActive(weights, context.benchmarkIds)) {
+    return computeWeightedAverage(modelId, context.scores, {
+      benchmarkIds: context.benchmarkIds,
+      weights,
+    });
+  }
+  return computeAverage(modelId, context.scores, { benchmarkIds: context.benchmarkIds });
+}
+
+/** The active aggregate of every Model over the selection, for ranking and tie-breaks. */
+function aggregateResultsFor(
   models: readonly Model[],
   context: LeaderboardContext,
 ): ReadonlyMap<string, AverageResult> {
   const results = new Map<string, AverageResult>();
   for (const model of models) {
-    results.set(
-      model.id,
-      computeAverage(model.id, context.scores, { benchmarkIds: context.benchmarkIds }),
-    );
+    results.set(model.id, aggregateResultFor(model.id, context));
   }
   return results;
 }
