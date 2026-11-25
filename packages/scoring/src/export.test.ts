@@ -332,4 +332,50 @@ describe("viewExportToCsv", () => {
       ].join("\r\n") + "\r\n",
     );
   });
+
+  it("labels and computes the Weighted Average when weights are active on the selection", () => {
+    // Model A: 80 on bench-1, 90 on bench-2. Weighting bench-1 ×3 gives
+    // (3·80 + 90) / (3 + 1) = 82.5 — hand-computed.
+    const view = buildViewExport({
+      rows: [makeModel()],
+      benchmarks: [makeBenchmark(), makeBenchmark({ id: "bench-2", name: "Bench 2" })],
+      scores: [
+        makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+        makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+      ],
+      state: makeState({ weights: { "bench-1": 3 } }),
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    expect(view.metadata.aggregate).toBe("Weighted Average");
+    expect(view.metadata.weights).toEqual({ "bench-1": 3 });
+    expect(view.rows[0]!.average).toBe(82.5);
+    // The CSV aggregate column carries the Weighted Average label, matching
+    // the leaderboard's header at click time.
+    expect(viewExportToCsv(view).split("\r\n")[0]).toContain("Weighted Average");
+    // Coverage stays unweighted: (2/2), not weighted by the ×3.
+    expect(view.rows[0]!.coverage).toEqual({ covered: 2, selected: 2 });
+  });
+
+  it("keeps the plain Average label when a remembered weight sits on an unselected Benchmark", () => {
+    // The label describes the number actually exported: a weight outside
+    // the selection does not change it (weightsAreActive semantics).
+    const view = buildViewExport({
+      rows: [makeModel()],
+      benchmarks: [
+        makeBenchmark(),
+        makeBenchmark({ id: "bench-2", name: "Bench 2" }),
+        makeBenchmark({ id: "bench-3", name: "Bench 3", tier: "extended" }),
+      ],
+      scores: [
+        makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+        makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+      ],
+      state: makeState({ weights: { "bench-3": 5 } }),
+      exportedAt: "2026-11-26T10:30:00.000Z",
+    });
+
+    expect(view.metadata.aggregate).toBe("Average");
+    expect(view.rows[0]!.average).toBe(85);
+  });
 });
