@@ -1,8 +1,9 @@
 import { BackLink } from "../BackLink";
 import { benchmarks, models, scores } from "@llm-bench/data";
-import { modelDataCurrency } from "@llm-bench/scoring";
+import { bestValueByBenchmark, modelDataCurrency, primaryScoreFor } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath } from "../routes";
+import { GroupedBarChart } from "../components/GroupedBarChart";
 import { ScorePairDetail } from "../components/ScorePairDetail";
 import { sourceHostname } from "../provenance";
 
@@ -32,6 +33,10 @@ export function ModelPage({ modelId }: { modelId: string }) {
     );
   }
 
+  // The current best Primary score per Benchmark, across all Models —
+  // the leader each of the Model's Primary scores is compared against.
+  const bestByBenchmark = bestValueByBenchmark(scores);
+
   return (
     <>
       <BackLink />
@@ -40,7 +45,6 @@ export function ModelPage({ modelId }: { modelId: string }) {
       {/* The page's data currency: the latest of the Model's lastUpdated
           and its Scores' retrievedDate values (spec "Date semantics"). */}
       <p className="data-currency">Data current as of {modelDataCurrency(model, scores)}</p>
-
       <dl className="model-facts">
         <div>
           <dt>Provider</dt>
@@ -107,6 +111,31 @@ export function ModelPage({ modelId }: { modelId: string }) {
           <p>{model.notes}</p>
         </section>
       )}
+
+      {/* The Model against the Benchmark leaders: the Model's Primary
+          score per Benchmark (catalogue order, like the leaderboard's
+          columns) against the best Primary score across all Models, from
+          the scoring package's best-value API. Missing values render
+          "n/a" — never a zero bar. */}
+      <section>
+        <h2>{model.name} against the Benchmark leaders</h2>
+        <p className="detail-note">
+          Primary scores only. The “Best across Models” bar is the best Primary score
+          across all Models on that Benchmark; missing values are shown as “n/a”, never
+          as zero.
+        </p>
+        <GroupedBarChart
+          ariaLabel={`Bar chart: ${model.name} against the best Primary score per Benchmark`}
+          series={[{ label: model.name }, { label: "Best across Models" }]}
+          rows={benchmarks.map((benchmark) => {
+            const primary = primaryScoreFor(model.id, benchmark.id, scores);
+            return {
+              label: benchmark.name,
+              values: [primary?.value, bestByBenchmark.get(benchmark.id)] as const,
+            };
+          })}
+        />
+      </section>
 
       {/* Every Score recorded for this Model, one section per Benchmark
           (in catalogue order, like the leaderboard's columns): ticket 07's

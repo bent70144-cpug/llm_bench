@@ -189,4 +189,27 @@ describe("Model detail pages (ticket 09)", () => {
     },
     480_000,
   );
+
+  it(
+    "ships the Model-versus-leaders chart, data-driven with n/a for gaps",
+    () => {
+      const build = runBuild();
+      expect(build.status).toBe(0);
+
+      const bundle = readBuiltBundle();
+
+      // The chart section and its furniture ship: the section heading is
+      // composed at runtime as "<Model name> against the Benchmark leaders",
+      // the comparison series is the best Primary score across all Models
+      // (from bestValueByBenchmark), and the note pins the n/a-never-zero
+      // rule. The rows themselves (all 17 Benchmarks, in catalogue order)
+      // are derived at runtime from the data package — pinned by the
+      // browser check against the real values.
+      expect(bundle).toContain("against the Benchmark leaders");
+      expect(bundle).toContain("Best across Models");
+      expect(bundle).toContain("Primary scores only");
+      expect(bundle).toContain("never as zero");
+    },
+    480_000,
+  );
 });
