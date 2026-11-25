@@ -474,12 +474,15 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
 
   /**
    * The text (and class) of one Benchmark cell of one Model's row:
-   * `benchmarkId` must be among the selected Benchmarks.
+   * `benchmarkId` must be among the selected Benchmarks. `linkText` is the
+   * text of the cell's Score value anchor — the cell's own text includes the
+   * ⓘ details control beside the value (ticket 07), so value assertions read
+   * the anchor, not the whole cell.
    */
   const benchmarkCell = async (
     modelName: string,
     benchmarkId: string,
-  ): Promise<{ text: string; className: string }> => {
+  ): Promise<{ text: string; className: string; linkText: string }> => {
     const selection = defaultSelectedBenchmarkIds(catalogue);
     const cellIndex =
       7 + // the fixed Model-field cells after the row header (Provider … Coverage)
@@ -493,10 +496,11 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
         return {
           text: (await cell.textContent()) ?? "",
           className: (await cell.getAttribute("class")) ?? "",
+          linkText: (await cell.locator("a.score-link").textContent()) ?? "",
         };
       }
     }
-    return { text: "", className: "" };
+    return { text: "", className: "", linkText: "" };
   };
 
   const selection = defaultSelectedBenchmarkIds(catalogue);
@@ -727,8 +731,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     const opusCell = await benchmarkCell("Claude Opus 4.5", "swebench-verified");
     check(
       "the displayed Score is the Primary score, not a higher alternate setting",
-      opusCell.text === String(opusPrimary.value),
-      opusCell.text,
+      opusCell.linkText === String(opusPrimary.value),
+      opusCell.linkText,
     );
 
     // The highlighted best Score per Benchmark is the best PRIMARY score.
@@ -745,8 +749,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       const bestCell = await benchmarkCell(bestModel.name, "swebench-verified");
       check(
         "the best-Score highlight marks the best Primary score",
-        bestCell.className.includes("best") && bestCell.text === String(best),
-        `${bestModel.name}: "${bestCell.text}" class="${bestCell.className}"`,
+        bestCell.className.includes("best") && bestCell.linkText === String(best),
+        `${bestModel.name}: "${bestCell.linkText}" class="${bestCell.className}"`,
       );
     }
   });
