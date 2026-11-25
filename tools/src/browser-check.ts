@@ -55,6 +55,13 @@ import { startSpaStaticServer } from "./lib/spa-static-server";
  * by the sibling script perf-check.ts, which runs after this one under
  * pnpm test:browser.
  *
+ * Ticket 12 covers the exports: three labelled, keyboard-operable controls
+ * whose clicks produce real downloads (Playwright download events) — the
+ * current filtered and sorted view as CSV and as JSON (selected Benchmark
+ * columns, the active aggregate, Coverage, and Score provenance, all
+ * reflecting the state at click time), and the full raw dataset as JSON,
+ * including a non-Primary alternate Evaluation setting.
+ *
  * Playwright is provided by the sandbox (1.57 + cached Chromium), not by
  * the workspace — its entry file is discovered below and can be overridden
  * with PLAYWRIGHT_ENTRY=<path to playwright's index.js>.
@@ -81,6 +88,12 @@ interface LocatorLike {
   locator(selector: string): LocatorLike;
 }
 
+/** A Playwright download, structurally typed — ticket 12's export checks. */
+interface DownloadLike {
+  suggestedFilename(): string;
+  path(): Promise<string>;
+}
+
 interface PageLike {
   goto(url: string, options?: { waitUntil?: "load" | "domcontentloaded" }): Promise<unknown>;
   reload(options?: { waitUntil?: "load" | "domcontentloaded" }): Promise<unknown>;
@@ -96,6 +109,8 @@ interface PageLike {
   emulateMedia(options: { colorScheme: "light" | "dark" | "no-preference" }): Promise<void>;
   setViewportSize(size: { width: number; height: number }): Promise<void>;
   waitForFunction(expression: string, options?: { timeout?: number }): Promise<void>;
+  /** Waits for the next download event (ticket 12's export checks). */
+  waitForEvent(event: "download", options?: { timeout?: number }): Promise<DownloadLike>;
 }
 
 interface PlaywrightModule {
@@ -1649,6 +1664,218 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       ),
     );
     check("the URL keeps the explicit empty selection", queryString() === "benchmarks=", queryString());
+  });
+
+  // --- Ticket 12: CSV and JSON export -----------------------------------
+
+  await step("the export controls download the current view and the full dataset (ticket 12)", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // Three clearly labelled controls, each stating what it exports.
+    const csvButton = page.locator(
+      'button[aria-label="Export the current filtered and sorted view as CSV"]',
+    );
+    const jsonButton = page.locator(
+      'button[aria-label="Export the current filtered and sorted view as JSON"]',
+    );
+    const datasetButton = page.locator(
+      "button[aria-label=\"Export the full raw dataset as JSON, including all Scores and alternate Evaluation settings\"]",
+    );
+    check("the Export view (CSV) control is present with its aria-label", (await csvButton.count()) === 1);
+    check("the Export view (JSON) control is present with its aria-label", (await jsonButton.count()) === 1);
+    check(
+      "the Export full dataset (JSON) control is present with its aria-label",
+      (await datasetButton.count()) === 1,
+    );
+    check(
+      "the controls' visible labels state what they export",
+      (await csvButton.textContent()) === "Export view (CSV)" &&
+        (await jsonButton.textContent()) === "Export view (JSON)" &&
+        (await datasetButton.textContent()) === "Export full dataset (JSON)",
+    );
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Keyboard first: focus + Enter on the CSV control triggers the download
+    // through a real Playwright download event.
+    await csvButton.focus();
+    const csvByKeyboard = page.waitForEvent("download", { timeout: 10_000 });
+    await page.keyboard.press("Enter");
+    const csvDownload = await csvByKeyboard;
+    check(
+      "the CSV control is keyboard-operable: Enter produces the download",
+      (await csvDownload.suggestedFilename()) === `llm-bench-view-${today}.csv`,
+      await csvDownload.suggestedFilename(),
+    );
+
+    const csv = readFileSync(await csvDownload.path(), "utf8");
+    check("the CSV download is non-empty", csv.length > 0);
+    const csvLines = csv.split("\r\n");
+    const expectedHeader = [
+      "Model id",
+      "Model name",
+      "Provider",
+      "License",
+      "License name",
+      "Context window",
+      "Release date",
+      "Input price / 1M",
+      "Output price / 1M",
+      "Reference inference provider",
+      "Average",
+      "Coverage",
+      ...selection.flatMap((id) => {
+        const name = catalogue.find((benchmark) => benchmark.id === id)!.name;
+        return [
+          name,
+          `${name} Source type`,
+          `${name} source URL`,
+          `${name} publishedDate`,
+          `${name} retrievedDate`,
+        ];
+      }),
+    ].join(",");
+    check(
+      "the CSV header derives from the active selection: Model fields, Average, Coverage, then per-Benchmark score + provenance columns",
+      csvLines[0] === expectedHeader,
+      (csvLines[0] ?? "").slice(0, 100),
+    );
+    check(
+      "one row per Model plus header and trailing line break",
+      csvLines.length === models.length + 2,
+      `${csvLines.length} lines`,
+    );
+    check(
+      "the CSV rows keep the ranked view order (GPT-6.2 Astra leads)",
+      csvLines[1]!.startsWith("gpt-6-2-astra,GPT-6.2 Astra,"),
+      (csvLines[1] ?? "").slice(0, 60),
+    );
+    const opusCsvLine = csvLines.find((line) => line.startsWith("claude-opus-4-6,"));
+    check(
+      "a real Model row carries its Primary scores with provenance (Opus 4.6: SWE-bench Verified 75.6, leaderboard, swebench.com) and its Average with Coverage (89.6475, (4/12)) — never its alternate settings (80.84, 99.25)",
+      opusCsvLine !== undefined &&
+        opusCsvLine.includes("75.6,leaderboard,https://www.swebench.com/") &&
+        opusCsvLine.includes("89.6475,(4/12)") &&
+        !opusCsvLine.includes("80.84") &&
+        !opusCsvLine.includes("99.25"),
+      opusCsvLine?.slice(0, 90) ?? "row missing",
+    );
+
+    // Now filter the view (search) and export again: the JSON must contain
+    // exactly the filtered rows — the export reflects click-time state.
+    await page.locator('input[type="search"]').fill("claude");
+    const claudeModels = filterModels(models, { search: "claude" });
+    check(
+      "the table narrows to the Claude Models",
+      (await page.locator("tbody tr").count()) === claudeModels.length,
+      `${await page.locator("tbody tr").count()} rows vs ${claudeModels.length} expected`,
+    );
+
+    const jsonDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
+    await jsonButton.click();
+    const jsonDownload = await jsonDownloadPromise;
+    check(
+      "the view JSON download carries the dated filename",
+      (await jsonDownload.suggestedFilename()) === `llm-bench-view-${today}.json`,
+      await jsonDownload.suggestedFilename(),
+    );
+    const viewJson = JSON.parse(readFileSync(await jsonDownload.path(), "utf8")) as {
+      metadata: {
+        kind: string;
+        aggregate: string;
+        selectedBenchmarks: unknown[];
+        filters: { search: string };
+        rowCount: number;
+      };
+      rows: { model: { id: string }; scores: Record<string, { value: number } | null> }[];
+    };
+    check(
+      "the view JSON describes itself: kind, aggregate, selection, and the active filters",
+      viewJson.metadata.kind === "llm-bench-view" &&
+        viewJson.metadata.aggregate === "Average" &&
+        viewJson.metadata.selectedBenchmarks.length === selection.length &&
+        viewJson.metadata.filters.search === "claude",
+    );
+    check(
+      "the view JSON contains exactly the filtered rows (as a set — the order is the view's ranking)",
+      viewJson.metadata.rowCount === claudeModels.length &&
+        JSON.stringify([...viewJson.rows.map((row) => row.model.id)].sort()) ===
+          JSON.stringify(claudeModels.map((model) => model.id).sort()),
+    );
+    const opusJsonRow = viewJson.rows.find((row) => row.model.id === "claude-opus-4-6");
+    check(
+      "the view JSON nests per-Benchmark scores with null for missing (Opus 4.6: SWE-bench Verified 75.6, MMLU-Pro null)",
+      opusJsonRow?.scores["swebench-verified"]?.value === 75.6 &&
+        opusJsonRow?.scores["mmlu-pro"] === null,
+    );
+
+    // Weights are click-time state too: with SWE-bench Verified weighted ×2
+    // the CSV's aggregate column is labelled Weighted Average, and Opus 4.6's
+    // aggregate is (91.31 + 99.79 + 91.89 + 2·75.6) / 5 = 86.838 (hand-computed,
+    // Coverage still (4/12)).
+    const swebench = catalogue.find((benchmark) => benchmark.id === "swebench-verified");
+    if (swebench !== undefined) {
+      const weightInput = page
+        .locator(`fieldset.weights-selection label.weight-option:has-text("${swebench.name}")`)
+        .locator("input");
+      await weightInput.fill("2");
+
+      const weightedCsvPromise = page.waitForEvent("download", { timeout: 10_000 });
+      await csvButton.click();
+      const weightedCsv = await weightedCsvPromise;
+      const weightedCsvText = readFileSync(await weightedCsv.path(), "utf8");
+      const weightedOpus = weightedCsvText
+        .split("\r\n")
+        .find((line) => line.startsWith("claude-opus-4-6,"));
+      check(
+        "a weight at click time switches the CSV aggregate column to Weighted Average and re-computes the value (86.838, (4/12))",
+        weightedCsvText.split("\r\n")[0]!.includes(",Weighted Average,Coverage,") === true &&
+          weightedOpus !== undefined &&
+          weightedOpus.includes("86.838,(4/12)"),
+        weightedOpus?.slice(0, 90) ?? "row missing",
+      );
+    }
+
+    // The full-dataset export: the raw arrays, every Score included.
+    const datasetDownloadPromise = page.waitForEvent("download", { timeout: 10_000 });
+    await datasetButton.click();
+    const datasetDownload = await datasetDownloadPromise;
+    check(
+      "the dataset download carries the dated filename",
+      (await datasetDownload.suggestedFilename()) === `llm-bench-dataset-${today}.json`,
+      await datasetDownload.suggestedFilename(),
+    );
+    const datasetJson = JSON.parse(readFileSync(await datasetDownload.path(), "utf8")) as {
+      kind: string;
+      models: unknown[];
+      benchmarks: unknown[];
+      scores: {
+        modelId: string;
+        benchmarkId: string;
+        value: number;
+        evaluationSetting: string;
+        isPrimary: boolean;
+      }[];
+    };
+    check(
+      "the dataset export carries every raw Model, Benchmark, and Score",
+      datasetJson.kind === "llm-bench-dataset" &&
+        datasetJson.models.length === models.length &&
+        datasetJson.benchmarks.length === catalogue.length &&
+        datasetJson.scores.length === scores.length,
+    );
+    check(
+      "the dataset export includes the non-Primary tau²-bench Telecom alternate (Opus 4.6, 99.25)",
+      datasetJson.scores.some(
+        (score) =>
+          score.modelId === "claude-opus-4-6" &&
+          score.benchmarkId === "tau2-bench" &&
+          score.value === 99.25 &&
+          score.evaluationSetting === "pass^1 (Telecom domain)" &&
+          score.isPrimary === false,
+      ),
+    );
   });
 
   // --- Ticket 09: Model detail pages -----------------------------------
