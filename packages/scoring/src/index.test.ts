@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
-import { scores as publishedScores } from "@llm-bench/data";
+import { models as publishedModels, scores as publishedScores } from "@llm-bench/data";
 
 import {
   bestValueByBenchmark,
@@ -9,6 +9,7 @@ import {
   filterModels,
   formatCoverage,
   isUnderHalfCoverage,
+  modelDataCurrency,
   primaryScoreFor,
   primaryScores,
   rankModelsByAverage,
@@ -828,6 +829,57 @@ describe("scoresForPair", () => {
       expect(pair.primary?.value).toBe(95.8);
       expect(pair.primary?.evaluationSetting).toBe("semi-private, max reasoning effort");
       expect(pair.alternates.map((score) => score.value)).toEqual([94.6]);
+    });
+  });
+});
+
+describe("modelDataCurrency", () => {
+  it("returns the Model's lastUpdated when it is later than every Score's retrievedDate", () => {
+    // model-a's lastUpdated is 2026-02-01; its Scores were retrieved 2026-01-02.
+    expect(modelDataCurrency(makeModel(), scores)).toBe("2026-02-01");
+  });
+
+  it("returns the latest retrievedDate when a Score was fetched after the metadata update", () => {
+    const model = makeModel({ id: "model-x", lastUpdated: "2026-03-01" });
+    const fetched: Score[] = [
+      makeScore({ modelId: "model-x", retrievedDate: "2026-02-01" }),
+      makeScore({ modelId: "model-x", retrievedDate: "2026-03-15" }),
+    ];
+
+    expect(modelDataCurrency(model, fetched)).toBe("2026-03-15");
+  });
+
+  it("uses every Score of the Model — alternate Evaluation settings too", () => {
+    const model = makeModel({ id: "model-y", lastUpdated: "2026-03-01" });
+    const fetched: Score[] = [
+      makeScore({ modelId: "model-y", retrievedDate: "2026-02-01" }),
+      // An alternate Evaluation setting fetched later than the Primary score.
+      makeScore({ modelId: "model-y", retrievedDate: "2026-03-02", isPrimary: false }),
+    ];
+
+    expect(modelDataCurrency(model, fetched)).toBe("2026-03-02");
+  });
+
+  it("ignores Scores of other Models", () => {
+    const model = makeModel({ id: "model-z", lastUpdated: "2026-03-01" });
+    const others: Score[] = [makeScore({ modelId: "other", retrievedDate: "2026-12-31" })];
+
+    expect(modelDataCurrency(model, others)).toBe("2026-03-01");
+  });
+
+  it("returns lastUpdated for a Model with no Scores", () => {
+    expect(modelDataCurrency(makeModel({ lastUpdated: "2026-05-05" }), [])).toBe("2026-05-05");
+  });
+
+  describe("against the real Published Results in @llm-bench/data", () => {
+    it("every real Model's data currency is the 2026-11-26 dataset snapshot date", () => {
+      // Every real Score was retrieved 2026-11-26 and every Model's
+      // lastUpdated is 2026-11-26, so each Model page header reads that
+      // date — the page can never look fresher than its oldest source.
+      for (const model of publishedModels) {
+        expect(modelDataCurrency(model, publishedScores)).toBe("2026-11-26");
+      }
+      expect(publishedModels).toHaveLength(26);
     });
   });
 });
