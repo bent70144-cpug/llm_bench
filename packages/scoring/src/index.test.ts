@@ -22,6 +22,7 @@ import {
   primaryScores,
   rankModelsByAverage,
   scoresForPair,
+  selectRadarBenchmarks,
   selectedBenchmarks,
   sortModelsByColumn,
   weightsAreActive,
@@ -376,6 +377,155 @@ describe("selectedBenchmarks", () => {
 
   it("returns no columns for an empty selection", () => {
     expect(selectedBenchmarks(catalogue, [])).toEqual([]);
+  });
+});
+
+describe("selectRadarBenchmarks", () => {
+  /** A nine-Benchmark catalogue: bench-1 … bench-9, catalogue order. */
+  const catalogue = Array.from({ length: 9 }, (_, index) =>
+    makeBenchmark({ id: `bench-${index + 1}` }),
+  );
+
+  it("keeps the whole selection when it fits under the cap, ties in catalogue order", () => {
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-2" })];
+    const scores = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+    ];
+
+    // Both Benchmarks are covered by the one compared Model; the selection
+    // fits under the cap, so everything stays, in catalogue order.
+    expect(selectRadarBenchmarks(selection, ["model-a"], scores)).toEqual({
+      benchmarkIds: ["bench-1", "bench-2"],
+      deprioritizedBenchmarkIds: [],
+    });
+  });
+
+  it("prioritizes Benchmarks with Primary scores across more compared Models", () => {
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-2" })];
+    const scores = [
+      // Both compared Models have a Primary score on bench-2; only one on bench-1.
+      makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+      makeScore({ modelId: "model-b", benchmarkId: "bench-2", value: 70 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+    ];
+
+    expect(selectRadarBenchmarks(selection, ["model-a", "model-b"], scores).benchmarkIds).toEqual([
+      "bench-2",
+      "bench-1",
+    ]);
+  });
+
+  it("breaks coverage ties in catalogue order", () => {
+    // The selection arrives in catalogue order (as selectedBenchmarks
+    // returns it); equal coverage must keep that order.
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-3" })];
+    const scores = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-3", value: 60 }),
+    ];
+
+    expect(selectRadarBenchmarks(selection, ["model-a"], scores).benchmarkIds).toEqual([
+      "bench-1",
+      "bench-3",
+    ]);
+  });
+
+  it("caps at 8 axes and reports the deprioritized Benchmarks in catalogue order", () => {
+    const scores = [
+      // bench-1, 2, 5, 7: covered by both compared Models.
+      ...["bench-1", "bench-2", "bench-5", "bench-7"].flatMap((benchmarkId) => [
+        makeScore({ modelId: "model-a", benchmarkId, value: 80 }),
+        makeScore({ modelId: "model-b", benchmarkId, value: 70 }),
+      ]),
+      // bench-3, 4, 8: covered by one compared Model.
+      ...["bench-3", "bench-4", "bench-8"].map((benchmarkId) =>
+        makeScore({ modelId: "model-a", benchmarkId, value: 60 }),
+      ),
+      // bench-6: covered by no compared Model. bench-9: also one covered Model.
+      makeScore({ modelId: "model-b", benchmarkId: "bench-9", value: 50 }),
+    ];
+
+    const radar = selectRadarBenchmarks(catalogue, ["model-a", "model-b"], scores);
+
+    // Coverage 2 first (catalogue order), then coverage 1 (catalogue order);
+    // the uncovered bench-6 is the one axis the cap drops.
+    expect(radar.benchmarkIds).toEqual([
+      "bench-1",
+      "bench-2",
+      "bench-5",
+      "bench-7",
+      "bench-3",
+      "bench-4",
+      "bench-8",
+      "bench-9",
+    ]);
+    expect(radar.deprioritizedBenchmarkIds).toEqual(["bench-6"]);
+  });
+
+  it("cuts within a coverage tie by catalogue order when the cap bites", () => {
+    // Nine equally covered Benchmarks: the cap keeps the first eight in
+    // catalogue order and deprioritizes the ninth.
+    const scores = catalogue.flatMap((benchmark) => [
+      makeScore({ modelId: "model-a", benchmarkId: benchmark.id, value: 80 }),
+      makeScore({ modelId: "model-b", benchmarkId: benchmark.id, value: 70 }),
+    ]);
+
+    const radar = selectRadarBenchmarks(catalogue, ["model-a", "model-b"], scores);
+    expect(radar.benchmarkIds).toEqual(["bench-1", "bench-2", "bench-3", "bench-4", "bench-5", "bench-6", "bench-7", "bench-8"]);
+    expect(radar.deprioritizedBenchmarkIds).toEqual(["bench-9"]);
+  });
+
+  it("counts only Primary scores of the compared Models", () => {
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-2" })];
+    const scores = [
+      // An alternate Evaluation setting never counts, whoever it belongs to.
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 99, isPrimary: false }),
+      makeScore({ modelId: "model-b", benchmarkId: "bench-1", value: 99, isPrimary: false }),
+      // Scores of Models that are not being compared never count either.
+      makeScore({ modelId: "model-z", benchmarkId: "bench-1", value: 95 }),
+      makeScore({ modelId: "model-z", benchmarkId: "bench-2", value: 95 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 60 }),
+    ];
+
+    expect(selectRadarBenchmarks(selection, ["model-a", "model-b"], scores).benchmarkIds).toEqual([
+      "bench-2",
+      "bench-1",
+    ]);
+  });
+
+  it("counts a duplicated compared Model id once", () => {
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-2" })];
+    const scores = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+    ];
+
+    // "model-a" twice must not double bench-1's coverage to 2.
+    expect(
+      selectRadarBenchmarks(selection, ["model-a", "model-a"], scores).benchmarkIds,
+    ).toEqual(["bench-1", "bench-2"]);
+  });
+
+  it("honors a custom cap, including cap 0", () => {
+    const selection = [makeBenchmark({ id: "bench-1" }), makeBenchmark({ id: "bench-2" })];
+    const scores = [makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 })];
+
+    expect(selectRadarBenchmarks(selection, ["model-a"], scores, 1)).toEqual({
+      benchmarkIds: ["bench-2"],
+      deprioritizedBenchmarkIds: ["bench-1"],
+    });
+    expect(selectRadarBenchmarks(selection, ["model-a"], scores, 0)).toEqual({
+      benchmarkIds: [],
+      deprioritizedBenchmarkIds: ["bench-1", "bench-2"],
+    });
+  });
+
+  it("returns empty axes for an empty selection", () => {
+    expect(selectRadarBenchmarks([], ["model-a"], [])).toEqual({
+      benchmarkIds: [],
+      deprioritizedBenchmarkIds: [],
+    });
   });
 });
 
