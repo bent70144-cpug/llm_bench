@@ -48,7 +48,16 @@ section > p {
   font-size: 0.875rem;
 }
 
-.benchmark-facts {
+/* The Model page's data currency: the latest of the Model's lastUpdated
+   and its Scores' retrievedDate values. */
+.data-currency {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+.benchmark-facts,
+.model-facts {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 1.5rem;
@@ -59,18 +68,21 @@ section > p {
   background: light-dark(#ffffff, #0f172a);
 }
 
-.benchmark-facts div {
+.benchmark-facts div,
+.model-facts div {
   display: flex;
   align-items: baseline;
   gap: 0.375rem;
   font-size: 0.875rem;
 }
 
-.benchmark-facts dt {
+.benchmark-facts dt,
+.model-facts dt {
   color: light-dark(#64748b, #94a3b8);
 }
 
-.benchmark-facts dd {
+.benchmark-facts dd,
+.model-facts dd {
   margin: 0;
 }
 
