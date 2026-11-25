@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
-import { benchmarks } from "@llm-bench/data";
+import { benchmarks, models } from "@llm-bench/data";
 import { ThemeToggle } from "./ThemeToggle";
 import { useLocation } from "./router";
 import { resolveRoute } from "./routes";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
 import { BenchmarkPage } from "./pages/BenchmarkPage";
+import { ModelPage } from "./pages/ModelPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 /**
@@ -27,13 +28,19 @@ function App() {
     route.page === "benchmark"
       ? benchmarks.find((candidate) => candidate.id === route.benchmarkId)
       : undefined;
+  const model =
+    route.page === "model"
+      ? models.find((candidate) => candidate.id === route.modelId)
+      : undefined;
 
   const title =
     route.page === "benchmark"
       ? (benchmark?.name ?? "Benchmark not found")
-      : route.page === "not-found"
-        ? "Page not found"
-        : SITE_TITLE;
+      : route.page === "model"
+        ? (model?.name ?? "Model not found")
+        : route.page === "not-found"
+          ? "Page not found"
+          : SITE_TITLE;
 
   const mainRef = useRef<HTMLElement | null>(null);
   const previousPathname = useRef(pathname);
@@ -67,6 +74,8 @@ function App() {
           <LeaderboardPage />
         ) : route.page === "benchmark" ? (
           <BenchmarkPage benchmarkId={route.benchmarkId} />
+        ) : route.page === "model" ? (
+          <ModelPage modelId={route.modelId} />
         ) : (
           <NotFoundPage />
         )}

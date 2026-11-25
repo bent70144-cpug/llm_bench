@@ -226,6 +226,23 @@ export function scoresForPair(
 }
 
 /**
+ * The Model page header date — the data currency of everything the page
+ * shows: the latest of the Model's lastUpdated and the retrievedDate of
+ * every one of its Scores (Primary scores and alternate Evaluation
+ * settings alike). ISO dates compare lexicographically, so the maximum
+ * string is the latest date.
+ */
+export function modelDataCurrency(model: Model, scores: readonly Score[]): string {
+  let latest = model.lastUpdated;
+  for (const score of scores) {
+    if (score.modelId === model.id && score.retrievedDate > latest) {
+      latest = score.retrievedDate;
+    }
+  }
+  return latest;
+}
+
+/**
  * Maps each Benchmark id to the best Primary score value across all Models,
  * for highlighting the best Score per Benchmark. Non-primary Scores are
  * ignored; Benchmarks without a Primary score have no entry.
