@@ -481,13 +481,16 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
   };
 
   /**
-   * The text (and class) of one Benchmark cell of one Model's row:
-   * `benchmarkId` must be among the selected Benchmarks.
+   * The displayed Score text (and the cell's class) of one Benchmark cell
+   * of one Model's row: `benchmarkId` must be among the selected Benchmarks.
+   * The Score text is read from the score link — the value anchor — because
+   * the cell also carries the ⓘ details control beside it (ticket 07), so
+   * the raw cell text would include the glyph.
    */
   const benchmarkCell = async (
     modelName: string,
     benchmarkId: string,
-  ): Promise<{ text: string; className: string }> => {
+  ): Promise<{ scoreText: string; className: string }> => {
     const selection = defaultSelectedBenchmarkIds(catalogue);
     const cellIndex =
       7 + // the fixed Model-field cells after the row header (Provider … Coverage)
@@ -499,12 +502,12 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       if (name === modelName) {
         const cell = row.locator("td").nth(cellIndex);
         return {
-          text: (await cell.textContent()) ?? "",
+          scoreText: (await cell.locator("a.score-link").textContent()) ?? "",
           className: (await cell.getAttribute("class")) ?? "",
         };
       }
     }
-    return { text: "", className: "" };
+    return { scoreText: "", className: "" };
   };
 
   const selection = defaultSelectedBenchmarkIds(catalogue);
@@ -735,8 +738,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     const opusCell = await benchmarkCell("Claude Opus 4.5", "swebench-verified");
     check(
       "the displayed Score is the Primary score, not a higher alternate setting",
-      opusCell.text === String(opusPrimary.value),
-      opusCell.text,
+      opusCell.scoreText === String(opusPrimary.value),
+      opusCell.scoreText,
     );
 
     // The highlighted best Score per Benchmark is the best PRIMARY score.
@@ -753,8 +756,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       const bestCell = await benchmarkCell(bestModel.name, "swebench-verified");
       check(
         "the best-Score highlight marks the best Primary score",
-        bestCell.className.includes("best") && bestCell.text === String(best),
-        `${bestModel.name}: "${bestCell.text}" class="${bestCell.className}"`,
+        bestCell.className.includes("best") && bestCell.scoreText === String(best),
+        `${bestModel.name}: "${bestCell.scoreText}" class="${bestCell.className}"`,
       );
     }
   });
