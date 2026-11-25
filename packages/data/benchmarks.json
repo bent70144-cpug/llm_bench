@@ -9,8 +9,8 @@
     "tier": "core",
     "sourceUrl": "https://arxiv.org/abs/2311.12022",
     "canonicalSources": [
-      { "sourceType": "paper" },
       { "sourceType": "provider" },
+      { "sourceType": "paper" },
       { "sourceType": "leaderboard" },
       { "sourceType": "third-party" }
     ],
