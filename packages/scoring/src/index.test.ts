@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
+import { scores as publishedScores } from "@llm-bench/data";
 
 import {
   bestValueByBenchmark,
@@ -8,6 +9,7 @@ import {
   filterModels,
   primaryScoreFor,
   primaryScores,
+  scoresForPair,
   selectedBenchmarks,
   sortModelsByColumn,
 } from "./index";
@@ -375,5 +377,109 @@ describe("filterModels", () => {
         maxInputPricePer1M: 5,
       }).map((m) => m.id),
     ).toEqual(["model-a"]);
+  });
+});
+
+describe("scoresForPair", () => {
+  it("splits a pair's Scores into the Primary score and the alternate Evaluation settings", () => {
+    const pair = scoresForPair("model-a", "bench-2", scores);
+
+    expect(pair.primary?.value).toBe(90);
+    expect(pair.primary?.isPrimary).toBe(true);
+    expect(pair.alternates).toHaveLength(1);
+    expect(pair.alternates[0]?.value).toBe(70);
+    expect(pair.alternates[0]?.isPrimary).toBe(false);
+  });
+
+  it("keeps multiple alternate Evaluation settings in data order", () => {
+    const withTwoAlternates: Score[] = [
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 60, isPrimary: false }),
+      makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 70, isPrimary: false }),
+    ];
+
+    const pair = scoresForPair("model-a", "bench-1", withTwoAlternates);
+
+    expect(pair.primary?.value).toBe(80);
+    expect(pair.alternates.map((score) => score.value)).toEqual([60, 70]);
+  });
+
+  it("returns an empty alternates list when only the Primary score exists", () => {
+    const pair = scoresForPair("model-b", "bench-1", scores);
+
+    expect(pair.primary?.value).toBe(95);
+    expect(pair.alternates).toEqual([]);
+  });
+
+  it("returns no Scores at all for a pair the Model has not been scored on", () => {
+    const pair = scoresForPair("model-c", "bench-1", scores);
+
+    expect(pair.primary).toBeUndefined();
+    expect(pair.alternates).toEqual([]);
+  });
+
+  it("ignores Scores of other Models and Benchmarks", () => {
+    const pair = scoresForPair("model-b", "bench-1", scores);
+
+    expect(pair.alternates).toEqual([]);
+    expect(scoresForPair("model-a", "bench-9", scores).primary).toBeUndefined();
+  });
+
+  describe("against the real Published Results in @llm-bench/data", () => {
+    it("resolves claude-opus-4-6 on tau2-bench by the documented Retail rule: the lower Retail Score is Primary", () => {
+      // Real pair (impl-04): the Retail domain row 91.89 is Primary even
+      // though the Telecom domain row 99.25 is higher — resolution is by the
+      // documented rule, never by value.
+      const pair = scoresForPair("claude-opus-4-6", "tau2-bench", publishedScores);
+
+      expect(pair.primary?.value).toBe(91.89);
+      expect(pair.primary?.evaluationSetting).toBe("pass^1 (Retail domain)");
+      expect(pair.alternates.map((score) => score.value)).toEqual([99.25]);
+      expect(pair.alternates[0]?.evaluationSetting).toBe("pass^1 (Telecom domain)");
+    });
+
+    it("keeps claude-opus-4-5 on swebench-verified on the leaderboard row, not the higher provider rows", () => {
+      // Real pair (impl-04): the swebench.com leaderboard row 74.4 is
+      // Primary (Canonical sources rank 1) even though both provider
+      // self-reported rows are higher.
+      const pair = scoresForPair("claude-opus-4-5", "swebench-verified", publishedScores);
+
+      expect(pair.primary?.value).toBe(74.4);
+      expect(pair.primary?.sourceType).toBe("leaderboard");
+      expect(pair.primary?.sourceUrl).toBe("https://www.swebench.com/");
+      expect(pair.alternates.map((score) => score.value)).toEqual([80.9, 80.6]);
+    });
+
+    it("is consistent with primaryScoreFor: the Primary score, never an alternate, feeds the leaderboard", () => {
+      const pair = scoresForPair("claude-opus-4-6", "tau2-bench", publishedScores);
+      const primary = primaryScoreFor("claude-opus-4-6", "tau2-bench", publishedScores);
+
+      expect(primary).toBe(pair.primary);
+    });
+
+    it("pins that alternate Evaluation settings are excluded from the Average and best-Score highlighting", () => {
+      // The Average over tau2-bench uses the Primary 91.89 — the higher
+      // Telecom alternate 99.25 must never be averaged in…
+      const { average, coverage, selected } = computeAverage("claude-opus-4-6", publishedScores, {
+        benchmarkIds: ["tau2-bench"],
+      });
+      expect({ average, coverage, selected }).toEqual({ average: 91.89, coverage: 1, selected: 1 });
+
+      // …and best-Score highlighting uses Primary scores only: the best
+      // tau2-bench Primary score (91.89) is highlighted, not the 99.25
+      // alternate.
+      const best = bestValueByBenchmark(publishedScores);
+      expect(best.get("tau2-bench")).toBe(91.89);
+    });
+
+    it("splits the ARC-AGI-2 reasoning-effort rows for gpt-6-2-astra", () => {
+      // Real pair (impl-04): two leaderboard rows under different reasoning
+      // efforts — max effort is Primary.
+      const pair = scoresForPair("gpt-6-2-astra", "arc-agi-2", publishedScores);
+
+      expect(pair.primary?.value).toBe(95.8);
+      expect(pair.primary?.evaluationSetting).toBe("semi-private, max reasoning effort");
+      expect(pair.alternates.map((score) => score.value)).toEqual([94.6]);
+    });
   });
 });
