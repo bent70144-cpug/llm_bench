@@ -994,9 +994,11 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       ["Under 50% Coverage badge", "tbody .coverage-badge"],
       ["sort control label", "thead button.sort-button"],
       ["Score details control", "tbody button.score-details-button"],
+      ["best-Score cell link", "tbody td.best a"],
     ];
     const uiSamples: readonly [label: string, selector: string][] = [
       ["number-input border", "input[type='number']"],
+      ["theme-toggle border", "button.theme-toggle"],
     ];
 
     const auditTheme = async (themeName: string): Promise<void> => {
@@ -1057,6 +1059,137 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     await auditTheme("dark");
 
     // Back to the implicit light preference for the remaining checks.
+    await page.evaluate("localStorage.removeItem('llm-bench-theme')");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.reload({ waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+  });
+
+  await step("Benchmark pages and the Score panels meet WCAG contrast in both themes", async () => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.evaluate("localStorage.removeItem('llm-bench-theme')");
+
+    /** One 4.5:1 text-contrast assertion per sample of an audited surface. */
+    const auditSurface = async (
+      themeName: string,
+      surface: string,
+      textSamples: readonly [label: string, selector: string][],
+      uiSamples: readonly [label: string, selector: string][] = [],
+    ): Promise<void> => {
+      for (const [label, selector] of textSamples) {
+        const sample = await page.evaluate<PaintSample | null>(paintSampleExpression(selector));
+        const ratio = sample === null ? 0 : contrastRatio(sample.color, sample.background);
+        check(
+          `${themeName} theme, ${surface}: ${label} meets 4.5:1 contrast`,
+          ratio >= 4.5,
+          sample === null
+            ? `${selector} not found`
+            : `${sample.color} on ${sample.background} = ${ratio.toFixed(2)}:1`,
+        );
+      }
+      for (const [label, selector] of uiSamples) {
+        const sample = await page.evaluate<PaintSample | null>(paintSampleExpression(selector));
+        const ratio = sample === null ? 0 : contrastRatio(sample.borderColor, sample.background);
+        check(
+          `${themeName} theme, ${surface}: ${label} meets 3:1 non-text contrast`,
+          ratio >= 3,
+          sample === null
+            ? `${selector} not found`
+            : `border ${sample.borderColor} on ${sample.background} = ${ratio.toFixed(2)}:1`,
+        );
+      }
+    };
+
+    /** Toggles to the explicit `target` theme and waits for it to paint. */
+    const switchTheme = async (target: "dark" | "light"): Promise<void> => {
+      await page.locator("button.theme-toggle").click();
+      await page.waitForFunction(`document.documentElement.dataset.theme === '${target}'`);
+    };
+
+    // A scored Benchmark page that also renders URL patterns (so the
+    // url-patterns hint is audited too); any Benchmark is data-derived.
+    const auditBenchmark =
+      catalogue.find(
+        (entry) =>
+          primaryScoresFor(entry.id).length > 0 &&
+          entry.canonicalSources.some((source) => source.urlPatterns !== undefined),
+      ) ?? catalogue.find((entry) => primaryScoresFor(entry.id).length > 0);
+    if (auditBenchmark === undefined) {
+      check("data has a scored Benchmark for the page audit", false);
+      return;
+    }
+
+    // The Benchmark page (light, then dark via the toggle).
+    const benchmarkSamples: readonly [label: string, selector: string][] = [
+      ["Benchmark facts term", ".benchmark-facts dt"],
+      ["Benchmark facts value", ".benchmark-facts dd"],
+      ["Benchmark Source link", ".benchmark-facts a"],
+      ["description text", "p.page-intro"],
+      ["Canonical sources entry", ".canonical-sources li"],
+      ["Canonical sources URL pattern hint", ".url-patterns"],
+      ["Current best Score entry", ".best-scores li"],
+      ["best-Score source link", ".best-scores a"],
+    ];
+    await page.goto(`${base}/benchmarks/${auditBenchmark.id}`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    await auditSurface("light", "Benchmark page", benchmarkSamples);
+    await switchTheme("dark");
+    await auditSurface("dark", "Benchmark page", benchmarkSamples);
+
+    // The Score details panel over the leaderboard. It is reopened per
+    // theme because an open dialog would swallow the toggle click.
+    const panelSamples: readonly [label: string, selector: string][] = [
+      ["provenance term", "[role=dialog] .score-provenance dt"],
+      ["provenance value", "[role=dialog] .score-provenance dd"],
+      ["panel source link", "[role=dialog] .score-provenance a"],
+      ["verified-semantics note", "[role=dialog] .detail-note"],
+    ];
+    const panelUiSamples: readonly [label: string, selector: string][] = [
+      ["panel close-button border", "[role=dialog] .dialog-close"],
+    ];
+    const openPanel = async (): Promise<void> => {
+      await page.locator("tbody button.score-details-button").first().click();
+      await page.locator("[role=dialog]").waitFor({ state: "visible" });
+    };
+    const closePanel = async (): Promise<void> => {
+      await page.keyboard.press("Escape");
+      await page.locator("[role=dialog]").waitFor({ state: "hidden" });
+    };
+
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    await openPanel();
+    await auditSurface("dark", "Score details panel", panelSamples, panelUiSamples);
+    await closePanel();
+    await switchTheme("light");
+    await openPanel();
+    await auditSurface("light", "Score details panel", panelSamples, panelUiSamples);
+    await closePanel();
+
+    // The provenance tooltip: hover a Score value anchor per theme (the
+    // hover is dropped between themes so the toggle stays clickable).
+    const tooltipSamples: readonly [label: string, selector: string][] = [
+      ["tooltip provenance text", "[role=tooltip] p"],
+      ["tooltip hint text", "[role=tooltip] .tooltip-hint"],
+    ];
+    const hoverScore = async (): Promise<void> => {
+      await page.locator("tbody a.score-link").first().hover();
+      await page.locator("[role=tooltip]").waitFor({ state: "visible" });
+    };
+    const unhover = async (): Promise<void> => {
+      await page.locator("h1").first().hover();
+      await page.locator("[role=tooltip]").waitFor({ state: "hidden" });
+    };
+
+    await hoverScore();
+    await auditSurface("light", "Score tooltip", tooltipSamples);
+    await unhover();
+    await switchTheme("dark");
+    await hoverScore();
+    await auditSurface("dark", "Score tooltip", tooltipSamples);
+    await unhover();
+
+    // Leave the page clean for the remaining checks.
     await page.evaluate("localStorage.removeItem('llm-bench-theme')");
     await page.emulateMedia({ colorScheme: "light" });
     await page.reload({ waitUntil: "load" });
