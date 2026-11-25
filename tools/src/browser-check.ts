@@ -14,7 +14,9 @@ import { startSpaStaticServer } from "./lib/spa-static-server";
  * Covers what the static bundle test cannot: direct navigation and refresh
  * on /benchmarks/<id> render the data-driven page, the leaderboard links to
  * every Benchmark page, unknown ids and unbuilt routes get their not-found
- * views, and the pages are keyboard-operable.
+ * views, and the pages are keyboard-operable. Ticket 07 adds the Score
+ * provenance checks: the tooltip and the Score details panel over the
+ * leaderboard.
  *
  * Playwright is provided by the sandbox (1.57 + cached Chromium), not by
  * the workspace — its entry file is discovered below and can be overridden
@@ -34,7 +36,9 @@ interface LocatorLike {
   textContent(): Promise<string | null>;
   getAttribute(name: string): Promise<string | null>;
   click(): Promise<void>;
-  waitFor(options?: { state?: "attached" | "visible"; timeout?: number }): Promise<void>;
+  focus(): Promise<void>;
+  hover(): Promise<void>;
+  waitFor(options?: { state?: "attached" | "visible" | "hidden"; timeout?: number }): Promise<void>;
 }
 
 interface PageLike {
@@ -267,6 +271,166 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     await page.locator("h1").first().waitFor({ state: "visible" });
     check("Enter on the link returns to the leaderboard", pathname() === "/");
     check("leaderboard h1 renders", (await page.locator("h1").textContent()) === "LLM Bench");
+  });
+
+  await step("Score cells expose provenance and a Score details panel (ticket 07)", async () => {
+    // Everything under test is derived from the data package: a real pair
+    // with alternate Evaluation settings on a core-Tier Benchmark (its
+    // column is visible with the default selection) and a pair with only a
+    // Primary score.
+    const coreIds = new Set(catalogue.filter((b) => b.tier === "core").map((b) => b.id));
+    const byPair = new Map<string, Score[]>();
+    for (const score of scores) {
+      const key = `${score.modelId}|${score.benchmarkId}`;
+      byPair.set(key, [...(byPair.get(key) ?? []), score]);
+    }
+    const findPair = (withAlternates: boolean) => {
+      for (const [key, pair] of byPair) {
+        const [modelId, benchmarkId] = key.split("|") as [string, string];
+        if (!coreIds.has(benchmarkId)) continue;
+        if (withAlternates ? pair.length < 2 : pair.length !== 1) continue;
+        const model = models.find((candidate) => candidate.id === modelId);
+        const benchmark = catalogue.find((candidate) => candidate.id === benchmarkId);
+        if (model === undefined || benchmark === undefined) continue;
+        return { model, benchmark, pair };
+      }
+      return undefined;
+    };
+    const withAlternates = findPair(true);
+    const withoutAlternates = findPair(false);
+    if (withAlternates === undefined || withoutAlternates === undefined) {
+      check("data has core-Tier pairs with and without alternate settings", false);
+      return;
+    }
+    const primary = withAlternates.pair.find((score) => score.isPrimary)!;
+    const alternates = withAlternates.pair.filter((score) => !score.isPrimary);
+
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // The details control and the value anchor live in the same score cell.
+    const detailsLabel = `Score details: ${withAlternates.model.name} on ${withAlternates.benchmark.name}`;
+    const cellSpan = `span.score-cell:has(button[aria-label="${detailsLabel}"])`;
+    const valueLink = page.locator(`${cellSpan} > a.score-link`).first();
+    check(
+      "the value cell is a real anchor to the Primary score's source URL",
+      (await valueLink.getAttribute("href")) === primary.sourceUrl,
+    );
+    check(
+      "the value cell shows the Primary score value",
+      (await valueLink.textContent()) === String(primary.value),
+    );
+
+    // The provenance tooltip appears on hover…
+    const tooltip = page.locator("[role=tooltip]");
+    await valueLink.hover();
+    await tooltip.waitFor({ state: "visible" });
+    check("tooltip appears on hover", true);
+
+    // …hides when the mouse leaves…
+    await page.locator("h1").first().hover();
+    await tooltip.waitFor({ state: "hidden" });
+    check("tooltip hides when the mouse leaves", true);
+
+    // …and is keyboard-reachable: it appears on focus and is named by the
+    // anchor's aria-describedby.
+    await valueLink.focus();
+    await tooltip.waitFor({ state: "visible" });
+    check("tooltip is keyboard-reachable (appears on focus)", true);
+    const tooltipText = (await tooltip.textContent()) ?? "";
+    check(
+      "the anchor names the tooltip via aria-describedby",
+      (await valueLink.getAttribute("aria-describedby")) ===
+        (await tooltip.getAttribute("id")),
+    );
+    check(
+      "tooltip shows Source type, Evaluation setting, publishedDate, and retrievedDate",
+      tooltipText.includes(`Source type: ${primary.sourceType}`) &&
+        tooltipText.includes(primary.evaluationSetting) &&
+        tooltipText.includes(primary.publishedDate) &&
+        tooltipText.includes(primary.retrievedDate),
+    );
+    check(
+      "tooltip explains verified semantics: checked against the source, not independent reproduction",
+      tooltipText.includes(
+        "the data owner checked the value and Evaluation setting against the linked Source URL, not an independent reproduction",
+      ),
+    );
+
+    // The Score details panel opens from the keyboard…
+    const detailsButton = page.locator(`button[aria-label="${detailsLabel}"]`);
+    await detailsButton.focus();
+    await page.keyboard.press("Enter");
+    const dialog = page.locator("[role=dialog]");
+    await dialog.waitFor({ state: "visible" });
+    check("Enter on the details control opens the Score details panel", true);
+    check(
+      "focus moves into the dialog",
+      (await page.locator("[role=dialog]:focus").count()) === 1,
+    );
+
+    const dialogText = (await dialog.textContent()) ?? "";
+    check(
+      "panel is titled with the Model and the Benchmark",
+      dialogText.includes(
+        `Score details: ${withAlternates.model.name} on ${withAlternates.benchmark.name}`,
+      ),
+    );
+    check(
+      "panel labels the Primary score with its full provenance",
+      dialogText.includes("Primary score") &&
+        dialogText.includes(String(primary.value)) &&
+        dialogText.includes(primary.evaluationSetting) &&
+        dialogText.includes(primary.sourceType) &&
+        dialogText.includes(primary.publishedDate) &&
+        dialogText.includes(primary.retrievedDate),
+    );
+    check(
+      "panel links the Primary score to its source URL",
+      (await page.locator(`[role=dialog] a[href="${primary.sourceUrl}"]`).count()) >= 1,
+    );
+    check(
+      "panel lists every alternate Evaluation setting with its value and provenance",
+      dialogText.includes("Alternate Evaluation setting") &&
+        alternates.every(
+          (score) =>
+            dialogText.includes(String(score.value)) &&
+            dialogText.includes(score.evaluationSetting) &&
+            dialogText.includes(score.sourceType),
+        ),
+    );
+    check(
+      "panel notes that alternates are excluded from the Average and highlighting",
+      dialogText.includes("Excluded from the Average"),
+    );
+    check(
+      "panel explains verified semantics",
+      dialogText.includes(
+        "Verified means the data owner checked the value and Evaluation setting against the linked Source URL, not an independent reproduction",
+      ),
+    );
+
+    // …and closes with Escape, returning focus to the trigger.
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    check("Escape closes the panel", true);
+    check(
+      "focus returns to the details control",
+      (await page.locator("button:focus").getAttribute("aria-label")) === detailsLabel,
+    );
+
+    // A pair with only a Primary score shows no alternate section.
+    const plainLabel = `Score details: ${withoutAlternates.model.name} on ${withoutAlternates.benchmark.name}`;
+    await page.locator(`button[aria-label="${plainLabel}"]`).click();
+    await dialog.waitFor({ state: "visible" });
+    const plainText = (await dialog.textContent()) ?? "";
+    check(
+      "a pair without alternates shows the Primary score and no alternate section",
+      plainText.includes("Primary score") && !plainText.includes("Alternate Evaluation setting"),
+    );
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    check("Escape closes the no-alternates panel too", true);
   });
 }
 
