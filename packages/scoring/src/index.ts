@@ -66,6 +66,92 @@ export function primaryScores(scores: readonly Score[]): Score[] {
   return scores.filter((score) => score.isPrimary);
 }
 
+/** Per-Benchmark weights for the Weighted Average. Missing ids default to 1. */
+export type BenchmarkWeights = Readonly<Record<string, number>>;
+
+/** Options for computing a Weighted Average over a Benchmark selection. */
+export interface WeightedAverageOptions {
+  /** Ids of the selected Benchmarks. Order does not matter; duplicates are ignored. */
+  benchmarkIds: readonly string[];
+  /**
+   * Visitor-assigned weights per Benchmark id. A Benchmark without an entry
+   * carries the default weight 1; a weight of 0 excludes the Benchmark from
+   * the aggregate while keeping it selected for Coverage. Negative or
+   * non-finite values are treated as the default 1.
+   */
+  weights: BenchmarkWeights;
+}
+
+/**
+ * The effective weight of one Benchmark: the entry from `weights` when it is
+ * a finite number ≥ 0, otherwise the default 1.
+ */
+function effectiveWeight(benchmarkId: string, weights: BenchmarkWeights): number {
+  const weight = weights[benchmarkId];
+  if (weight === undefined || !Number.isFinite(weight) || weight < 0) return 1;
+  return weight;
+}
+
+/**
+ * Computes the Weighted Average of one Model over a selection of Benchmarks:
+ * the Average computed with visitor-assigned weights. Each weight applies
+ * only to the Primary scores the Model HAS on the selected Benchmarks, and
+ * the result is normalized by the sum of the weights of the Benchmarks the
+ * Model actually has — a Model missing a Benchmark is not penalized, so the
+ * Weighted Average stays comparable to the plain Average.
+ *
+ * Coverage is unweighted: it still counts the selected Benchmarks the Model
+ * has a Primary score on, so `(n/selected)` and the under-50% badge behave
+ * exactly as for the plain Average. A Model whose covered Benchmarks all
+ * carry weight 0 has no Weighted Average (null), never zero.
+ */
+export function computeWeightedAverage(
+  modelId: string,
+  scores: readonly Score[],
+  options: WeightedAverageOptions,
+): AverageResult {
+  const selected = new Set(options.benchmarkIds);
+  const primaryScoresForModel = scores.filter(
+    (score) => score.isPrimary && score.modelId === modelId && selected.has(score.benchmarkId),
+  );
+
+  if (primaryScoresForModel.length === 0) {
+    return { average: null, coverage: 0, selected: selected.size };
+  }
+
+  let weightedTotal = 0;
+  let weightSum = 0;
+  for (const score of primaryScoresForModel) {
+    const weight = effectiveWeight(score.benchmarkId, options.weights);
+    weightedTotal += weight * score.value;
+    weightSum += weight;
+  }
+
+  return {
+    average: weightSum === 0 ? null : weightedTotal / weightSum,
+    coverage: primaryScoresForModel.length,
+    selected: selected.size,
+  };
+}
+
+/**
+ * Whether any selected Benchmark carries a non-default (≠ 1) weight — the
+ * condition for the aggregate label to read "Weighted Average". The label
+ * describes the number actually displayed: a remembered weight on a
+ * Benchmark outside the selection does not change the computed value, so it
+ * does not switch the label. Invalid weights (negative, non-finite) count as
+ * the default.
+ */
+export function weightsAreActive(
+  weights: BenchmarkWeights,
+  benchmarkIds: readonly string[],
+): boolean {
+  return benchmarkIds.some((benchmarkId) => {
+    const weight = weights[benchmarkId];
+    return weight !== undefined && Number.isFinite(weight) && weight >= 0 && weight !== 1;
+  });
+}
+
 /**
  * The Coverage display form "(n/selected)": every Average is shown with
  * its Coverage count against the number of selected Benchmarks.

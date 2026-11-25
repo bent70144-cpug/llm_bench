@@ -5,6 +5,7 @@ import { scores as publishedScores } from "@llm-bench/data";
 import {
   bestValueByBenchmark,
   computeAverage,
+  computeWeightedAverage,
   defaultSelectedBenchmarkIds,
   filterModels,
   formatCoverage,
@@ -15,6 +16,7 @@ import {
   scoresForPair,
   selectedBenchmarks,
   sortModelsByColumn,
+  weightsAreActive,
 } from "./index";
 
 /**
@@ -111,6 +113,179 @@ describe("computeAverage", () => {
     });
 
     expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+});
+
+describe("computeWeightedAverage", () => {
+  // Two Models with symmetric Profiles over two Benchmarks: plain Averages
+  // tie at 80, so only the weights can separate them.
+  const weightedScores: Score[] = [
+    makeScore({ modelId: "model-p", benchmarkId: "bench-1", value: 90 }),
+    makeScore({ modelId: "model-p", benchmarkId: "bench-2", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-1", value: 70 }),
+    makeScore({ modelId: "model-q", benchmarkId: "bench-2", value: 90 }),
+    // A sparse Model: its only Primary score is on bench-1.
+    makeScore({ modelId: "model-s", benchmarkId: "bench-1", value: 90 }),
+  ];
+  const bothBenchmarks = ["bench-1", "bench-2"];
+
+  it("weights each covered Benchmark and normalizes by the weights of the Benchmarks the Model has", () => {
+    // Model A on the shared fixture: 80 and 90 with weights {2, 1}:
+    // (2*80 + 1*90) / (2 + 1) = 250/3 ≈ 83.33.
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 250 / 3, coverage: 2, selected: 2 });
+  });
+
+  it("swapping the weights swaps the emphasis — {2,1} vs {1,2} reorder the Models", () => {
+    // Model P (90, 70) vs Model Q (70, 90): plain Averages tie at 80.
+    // Weights {bench-1: 2, bench-2: 1}: P = 250/3 ≈ 83.33, Q = 230/3 ≈ 76.67.
+    // Weights {bench-1: 1, bench-2: 2}: P = 230/3, Q = 250/3 — reversed.
+    const first = computeWeightedAverage("model-p", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+    const second = computeWeightedAverage("model-q", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+    expect(first.average).toBe(250 / 3);
+    expect(second.average).toBe(230 / 3);
+    expect((first.average ?? 0) > (second.average ?? 0)).toBe(true);
+
+    const flipped = computeWeightedAverage("model-p", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+    const flippedOther = computeWeightedAverage("model-q", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 2 },
+    });
+    expect(flipped.average).toBe(230 / 3);
+    expect(flippedOther.average).toBe(250 / 3);
+    expect((flippedOther.average ?? 0) > (flipped.average ?? 0)).toBe(true);
+  });
+
+  it("a sparse Model is not penalized: a weight applies only to the Benchmarks it has", () => {
+    // Model S has only bench-1 (the double-weighted Benchmark): its
+    // Weighted Average is its single score, 90 — normalized by 2/2, not
+    // counted as missing bench-2.
+    const result = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 90, coverage: 1, selected: 2 });
+  });
+
+  it("all-default weights reproduce the plain Average exactly", () => {
+    const plain = computeAverage("model-a", scores, { benchmarkIds: bothBenchmarks });
+    const noWeights = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: {},
+    });
+    const defaultWeights = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 1 },
+    });
+
+    expect(noWeights).toEqual(plain);
+    expect(defaultWeights).toEqual(plain);
+  });
+
+  it("returns a null aggregate when no Benchmark is selected", () => {
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: [],
+      weights: { "bench-1": 2 },
+    });
+
+    expect(result).toEqual({ average: null, coverage: 0, selected: 0 });
+  });
+
+  it("a weight of 0 excludes a Benchmark from the aggregate but keeps it in Coverage", () => {
+    // Weight 0 on bench-1: the aggregate is 90/1 = 90 — bench-1 no longer
+    // contributes — but Coverage still counts both Benchmarks (Coverage is
+    // unweighted).
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 0, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: 90, coverage: 2, selected: 2 });
+  });
+
+  it("a Model whose covered Benchmarks all carry weight 0 has no Weighted Average", () => {
+    // Model S only has bench-1, and bench-1 is excluded by weight 0: the
+    // normalization would divide by 0, so the aggregate is null — the Model
+    // sorts with the null-aggregate Models, "n/a", never zero.
+    const result = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 0, "bench-2": 1 },
+    });
+
+    expect(result).toEqual({ average: null, coverage: 1, selected: 2 });
+  });
+
+  it("ignores non-primary Scores and weights on unselected Benchmarks", () => {
+    // The non-primary 70 on bench-2 must not feed the aggregate; a weight
+    // on bench-3 (not selected) changes nothing.
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": 1, "bench-2": 1, "bench-3": 5 },
+    });
+
+    expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+
+  it("treats invalid weights (negative, non-finite) as the default 1", () => {
+    const result = computeWeightedAverage("model-a", scores, {
+      benchmarkIds: bothBenchmarks,
+      weights: { "bench-1": -3, "bench-2": Number.POSITIVE_INFINITY },
+    });
+
+    expect(result).toEqual({ average: 85, coverage: 2, selected: 2 });
+  });
+
+  it("yields the same Coverage display and badge inputs as the plain Average", () => {
+    // Coverage is unweighted: formatCoverage and isUnderHalfCoverage read
+    // the same (n/selected) whether or not weights are active. Model S
+    // covers 1 of 3 selected Benchmarks — under 50%, so badged.
+    const weighted = computeWeightedAverage("model-s", weightedScores, {
+      benchmarkIds: ["bench-1", "bench-2", "bench-3"],
+      weights: { "bench-1": 2, "bench-2": 1 },
+    });
+
+    expect(formatCoverage(weighted)).toBe("(1/3)");
+    expect(isUnderHalfCoverage(weighted)).toBe(true);
+  });
+});
+
+describe("weightsAreActive", () => {
+  it("is false when no weight is set or every set weight is the default 1", () => {
+    expect(weightsAreActive({}, ["bench-1", "bench-2"])).toBe(false);
+    expect(weightsAreActive({ "bench-1": 1, "bench-2": 1 }, ["bench-1", "bench-2"])).toBe(false);
+  });
+
+  it("is true when any selected Benchmark carries a non-default weight", () => {
+    expect(weightsAreActive({ "bench-1": 2 }, ["bench-1", "bench-2"])).toBe(true);
+    // 0 is non-default too: it excludes the Benchmark from the aggregate.
+    expect(weightsAreActive({ "bench-1": 0 }, ["bench-1", "bench-2"])).toBe(true);
+    expect(weightsAreActive({ "bench-1": 0.5 }, ["bench-1", "bench-2"])).toBe(true);
+  });
+
+  it("is false when the non-default weight sits on an unselected Benchmark", () => {
+    // The label describes the number actually displayed: a remembered
+    // weight on a Benchmark outside the selection does not change the
+    // computed value, so the aggregate stays a plain Average.
+    expect(weightsAreActive({ "bench-3": 2 }, ["bench-1", "bench-2"])).toBe(false);
+  });
+
+  it("is false for invalid weights (negative, non-finite)", () => {
+    expect(weightsAreActive({ "bench-1": -2 }, ["bench-1"])).toBe(false);
+    expect(weightsAreActive({ "bench-1": Number.NaN }, ["bench-1"])).toBe(false);
   });
 });
 
