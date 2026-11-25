@@ -168,4 +168,25 @@ describe("Model detail pages (ticket 09)", () => {
     },
     480_000,
   );
+
+  it(
+    "mounts the Score provenance view for every Benchmark on each Model page",
+    () => {
+      const build = runBuild();
+      expect(build.status).toBe(0);
+
+      const bundle = readBuiltBundle();
+
+      // The per-Benchmark Scores area ships: one section per Benchmark (its
+      // name links to the Benchmark's page), each mounting ticket 07's
+      // ScorePairDetail — the Primary score and any alternate Evaluation
+      // settings with full provenance, and an "n/a" sentence for pairs the
+      // Model has not been scored on. ScorePairDetail's own labels ship
+      // since ticket 07; what this pins is the Model page's wiring of it.
+      expect(bundle).toContain("Every Score recorded for this Model");
+      expect(bundle).toContain("Primary score");
+      expect(bundle).toContain("no Scores have been published for");
+    },
+    480_000,
+  );
 });

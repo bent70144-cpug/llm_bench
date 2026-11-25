@@ -1,6 +1,9 @@
 import { BackLink } from "../BackLink";
-import { models, scores } from "@llm-bench/data";
+import { benchmarks, models, scores } from "@llm-bench/data";
 import { modelDataCurrency } from "@llm-bench/scoring";
+import { Link } from "../router";
+import { benchmarkPath } from "../routes";
+import { ScorePairDetail } from "../components/ScorePairDetail";
 import { sourceHostname } from "../provenance";
 
 /**
@@ -104,6 +107,23 @@ export function ModelPage({ modelId }: { modelId: string }) {
           <p>{model.notes}</p>
         </section>
       )}
+
+      {/* Every Score recorded for this Model, one section per Benchmark
+          (in catalogue order, like the leaderboard's columns): ticket 07's
+          ScorePairDetail owns the Primary score, the alternate Evaluation
+          settings, and the "n/a" sentence for unscored pairs. */}
+      <p className="page-intro">
+        Every Score recorded for this Model, by Benchmark — the Primary score and any
+        alternate Evaluation settings, each with full provenance.
+      </p>
+      {benchmarks.map((benchmark) => (
+        <section key={benchmark.id}>
+          <h2>
+            <Link to={benchmarkPath(benchmark.id)}>{benchmark.name}</Link>
+          </h2>
+          <ScorePairDetail model={model} benchmark={benchmark} scores={scores} />
+        </section>
+      ))}
     </>
   );
 }
