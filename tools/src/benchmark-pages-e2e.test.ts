@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Benchmark } from "@llm-bench/schema";
 import { benchmarkPath, resolveRoute } from "../../apps/web/src/routes";
+import { startSpaStaticServer } from "./lib/spa-static-server";
 
 /**
  * End-to-end proof (ticket 08): every Benchmark in the data package has a
@@ -27,10 +28,19 @@ import { benchmarkPath, resolveRoute } from "../../apps/web/src/routes";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DATA_DIR = path.join(REPO_ROOT, "packages/data");
-const DIST_ASSETS = path.join(REPO_ROOT, "apps/web/dist/assets");
+const DIST_DIR = path.join(REPO_ROOT, "apps/web/dist");
+const DIST_ASSETS = path.join(DIST_DIR, "assets");
 
 function readCatalogue(): Benchmark[] {
   return JSON.parse(readFileSync(path.join(DATA_DIR, "benchmarks.json"), "utf8")) as Benchmark[];
+}
+
+/** Builds the web app unless a build is already present. */
+function ensureBuilt(): void {
+  if (!existsSync(path.join(DIST_DIR, "index.html"))) {
+    const build = runBuild();
+    expect(build.status).toBe(0);
+  }
 }
 
 function readBuiltBundle(): string {
@@ -144,4 +154,54 @@ describe("Benchmark detail pages (ticket 08)", () => {
       destination: "/index.html",
     });
   });
+
+  it(
+    "serves direct navigation to every Benchmark route through the SPA fallback",
+    async () => {
+      ensureBuilt();
+      const indexHtml = readFileSync(path.join(DIST_DIR, "index.html"), "utf8");
+      const assetFile = readdirSync(DIST_ASSETS)[0];
+      expect(assetFile).toBeDefined();
+
+      const server = await startSpaStaticServer(DIST_DIR);
+      const base = `http://127.0.0.1:${server.port}`;
+      try {
+        // A direct navigation is a plain GET — exactly what a browser sends
+        // for a shared link or a refresh. Every Benchmark route (and every
+        // not-yet-built route) must return the app shell, which is what the
+        // vercel.json catch-all rewrite does in production.
+        for (const benchmark of readCatalogue()) {
+          const response = await fetch(`${base}/benchmarks/${benchmark.id}`);
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-type")).toContain("text/html");
+          expect(await response.text()).toBe(indexHtml);
+        }
+
+        for (const pathname of [
+          "/",
+          "/benchmarks/not-in-the-data-package", // client-side not-found view
+          "/benchmarks/gpqa-diamond?selection=gpqa-diamond", // query strings survive the rewrite
+          "/models/gpt-5-2", // ticket 09; generic not-found for now
+          "/compare", // ticket 10; generic not-found for now
+        ]) {
+          const response = await fetch(`${base}${pathname}`);
+          expect(response.status, pathname).toBe(200);
+          expect(await response.text()).toBe(indexHtml);
+        }
+
+        // Real files are served as themselves, not rewritten to the shell.
+        const assetResponse = await fetch(`${base}/assets/${assetFile}`);
+        expect(assetResponse.status).toBe(200);
+        expect(assetResponse.headers.get("content-type")).toContain(
+          assetFile.endsWith(".js") ? "javascript" : "text/css",
+        );
+        expect(await assetResponse.text()).toBe(
+          readFileSync(path.join(DIST_ASSETS, assetFile), "utf8"),
+        );
+      } finally {
+        await server.close();
+      }
+    },
+    60_000,
+  );
 });
