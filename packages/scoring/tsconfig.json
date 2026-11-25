@@ -1,7 +1,8 @@
 {
   "extends": "@llm-bench/config/tsconfig.base.json",
   "compilerOptions": {
-    "types": []
+    "types": [],
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src"]
 }

@@ -6,6 +6,7 @@ import { LICENSE_VALUES, type Benchmark, type Model, type Score } from "@llm-ben
 import {
   computeAverage,
   defaultSelectedBenchmarkIds,
+  encodeLeaderboardUrlState,
   filterModels,
   isUnderHalfCoverage,
   rankModelsByAverage,
@@ -30,6 +31,12 @@ import { startSpaStaticServer } from "./lib/spa-static-server";
  * Under 50% Coverage badge, instant recalculation on Benchmark toggles,
  * composed filter+search+sort, and Primary-only displayed cells.
  *
+ * Ticket 06 covers Benchmark weights and shareable URL state: a weight
+ * change reorders the rows and switches the aggregate label to Weighted
+ * Average, the view is written to the URL as query parameters, and opening
+ * or refreshing a shared URL restores the exact selection, weights, sorting,
+ * search, and filters.
+ *
  * Playwright is provided by the sandbox (1.57 + cached Chromium), not by
  * the workspace — its entry file is discovered below and can be overridden
  * with PLAYWRIGHT_ENTRY=<path to playwright's index.js>.
@@ -47,6 +54,7 @@ interface LocatorLike {
   count(): Promise<number>;
   textContent(): Promise<string | null>;
   getAttribute(name: string): Promise<string | null>;
+  inputValue(): Promise<string>;
   click(): Promise<void>;
   fill(value: string): Promise<void>;
   focus(): Promise<void>;
@@ -473,13 +481,16 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
   };
 
   /**
-   * The text (and class) of one Benchmark cell of one Model's row:
-   * `benchmarkId` must be among the selected Benchmarks.
+   * The displayed Score text (and the cell's class) of one Benchmark cell
+   * of one Model's row: `benchmarkId` must be among the selected Benchmarks.
+   * The Score text is read from the score link — the value anchor — because
+   * the cell also carries the ⓘ details control beside it (ticket 07), so
+   * the raw cell text would include the glyph.
    */
   const benchmarkCell = async (
     modelName: string,
     benchmarkId: string,
-  ): Promise<{ text: string; className: string }> => {
+  ): Promise<{ scoreText: string; className: string }> => {
     const selection = defaultSelectedBenchmarkIds(catalogue);
     const cellIndex =
       7 + // the fixed Model-field cells after the row header (Provider … Coverage)
@@ -491,12 +502,12 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       if (name === modelName) {
         const cell = row.locator("td").nth(cellIndex);
         return {
-          text: (await cell.textContent()) ?? "",
+          scoreText: (await cell.locator("a.score-link").textContent()) ?? "",
           className: (await cell.getAttribute("class")) ?? "",
         };
       }
     }
-    return { text: "", className: "" };
+    return { scoreText: "", className: "" };
   };
 
   const selection = defaultSelectedBenchmarkIds(catalogue);
@@ -727,8 +738,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     const opusCell = await benchmarkCell("Claude Opus 4.5", "swebench-verified");
     check(
       "the displayed Score is the Primary score, not a higher alternate setting",
-      opusCell.text === String(opusPrimary.value),
-      opusCell.text,
+      opusCell.scoreText === String(opusPrimary.value),
+      opusCell.scoreText,
     );
 
     // The highlighted best Score per Benchmark is the best PRIMARY score.
@@ -745,10 +756,246 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       const bestCell = await benchmarkCell(bestModel.name, "swebench-verified");
       check(
         "the best-Score highlight marks the best Primary score",
-        bestCell.className.includes("best") && bestCell.text === String(best),
-        `${bestModel.name}: "${bestCell.text}" class="${bestCell.className}"`,
+        bestCell.className.includes("best") && bestCell.scoreText === String(best),
+        `${bestModel.name}: "${bestCell.scoreText}" class="${bestCell.className}"`,
       );
     }
+  });
+
+  // --- Ticket 06: Benchmark weights and shareable URL state ---------------
+
+  /** The aggregate column header's button text ("Average ▼" / "Weighted Average ▼"). */
+  const aggregateHeaderText = async (): Promise<string> =>
+    (await page.locator("thead th").nth(6).locator("button").textContent()) ?? "";
+
+  /** The current URL's query string (without the leading "?"). */
+  const queryString = (): string => new URL(page.url()).search.replace(/^\?/, "");
+
+  await step("a Benchmark weight reorders the rows, switches the label, and lands in the URL", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    const swebench = catalogue.find((benchmark) => benchmark.id === "swebench-verified");
+    if (swebench === undefined) {
+      check("data has SWE-bench Verified", false);
+      return;
+    }
+
+    const plainRanked = rankModelsByAverage(models, leaderboardContext);
+    check(
+      "the aggregate header reads Average before any weight is set",
+      (await aggregateHeaderText()).startsWith("Average"),
+      await aggregateHeaderText(),
+    );
+    check(
+      "the app writes the view to the URL on load",
+      queryString().startsWith("benchmarks="),
+      queryString().slice(0, 60),
+    );
+
+    // Weight SWE-bench Verified ×2 through its labeled control.
+    const weightInput = page
+      .locator(`fieldset.weights-selection label.weight-option:has-text("${swebench.name}")`)
+      .locator("input");
+    await weightInput.click();
+    await weightInput.fill("2");
+
+    const weightedContext = {
+      scores,
+      benchmarkIds: selection,
+      weights: { "swebench-verified": 2 },
+    };
+    const expectedWeighted = rankModelsByAverage(models, weightedContext);
+    check(
+      "the aggregate header switches to Weighted Average",
+      (await aggregateHeaderText()).startsWith("Weighted Average"),
+      await aggregateHeaderText(),
+    );
+    const names = await rowNames();
+    check(
+      "the rows re-rank by the Weighted Average instantly",
+      JSON.stringify(names) === JSON.stringify(expectedWeighted.map((model) => model.name)),
+      names.slice(0, 3).join(" | "),
+    );
+    check(
+      "Claude Sonnet 4.6 overtakes Claude Opus 4.6 when SWE-bench Verified counts double",
+      names.indexOf("Claude Sonnet 4.6") < names.indexOf("Claude Opus 4.6"),
+    );
+    // Hand-computed from the data package: Opus 4.6's Weighted Average is
+    // (91.31 + 99.79 + 91.89 + 2·75.6) / 5 = 86.838 → 86.8, with its
+    // Coverage still (4/12) — Coverage is unweighted.
+    const opusRow = await rowTextByName("Claude Opus 4.6");
+    check(
+      "the weighted value and the unweighted Coverage render (86.8, (4/12))",
+      opusRow.includes("86.8") && opusRow.includes("(4/12)"),
+      opusRow.slice(0, 90),
+    );
+    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    check(
+      "the footer states the Weighted Average and the Benchmark count",
+      footer.includes("Weighted Average over 12 selected Benchmarks"),
+      footer.slice(0, 90),
+    );
+    check(
+      "the weight lands in the URL",
+      queryString().includes("weights=swebench-verified:2"),
+      queryString(),
+    );
+
+    // Refresh: the URL restores selection, weights, and view exactly.
+    await page.reload({ waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const reloadedNames = await rowNames();
+    check(
+      "a reload of the weighted URL restores the exact ranking",
+      JSON.stringify(reloadedNames) === JSON.stringify(expectedWeighted.map((model) => model.name)),
+    );
+    check(
+      "the aggregate header still reads Weighted Average after the reload",
+      (await aggregateHeaderText()).startsWith("Weighted Average"),
+    );
+    check("the weight input still reads 2 after the reload", (await weightInput.inputValue()) === "2");
+
+    // Back to the default weight: the label switches back and the URL drops
+    // the weights parameter.
+    await weightInput.fill("1");
+    check(
+      "the aggregate header switches back to Average at the default weight",
+      (await aggregateHeaderText()).startsWith("Average"),
+      await aggregateHeaderText(),
+    );
+    const restoredNames = await rowNames();
+    check(
+      "the ranking returns to the plain Average order",
+      JSON.stringify(restoredNames) === JSON.stringify(plainRanked.map((model) => model.name)),
+    );
+    check("the URL drops the weights parameter", !queryString().includes("weights="), queryString());
+
+    // A weight of 0 excludes the Benchmark from the aggregate but keeps it
+    // selected for Coverage — the documented 0-choice.
+    await weightInput.fill("0");
+    const excluded = rankModelsByAverage(models, {
+      scores,
+      benchmarkIds: selection,
+      weights: { "swebench-verified": 0 },
+    });
+    const excludedNames = await rowNames();
+    check(
+      "a weight of 0 excludes the Benchmark: the rows re-rank, the label stays Weighted Average",
+      JSON.stringify(excludedNames) === JSON.stringify(excluded.map((model) => model.name)) &&
+        (await aggregateHeaderText()).startsWith("Weighted Average"),
+      excludedNames.slice(0, 3).join(" | "),
+    );
+    check(
+      "the weight of 0 lands in the URL",
+      queryString().includes("weights=swebench-verified:0"),
+      queryString(),
+    );
+  });
+
+  await step("opening a shared URL restores the exact selection, weights, sorting, and filters", async () => {
+    // A URL built by the scoring package's encoder — the same string the app
+    // writes — carrying a two-Benchmark selection, a doubled MMLU-Pro
+    // weight, a GPQA Diamond sort, a search, a License filter, and compared
+    // Model ids (reserved for the compare view).
+    const gpqa = catalogue.find((benchmark) => benchmark.id === "gpqa-diamond");
+    const mmluPro = catalogue.find((benchmark) => benchmark.id === "mmlu-pro");
+    if (gpqa === undefined || mmluPro === undefined) {
+      check("data has GPQA Diamond and MMLU-Pro", false);
+      return;
+    }
+    const sharedQuery = encodeLeaderboardUrlState({
+      benchmarkIds: ["mmlu-pro", "gpqa-diamond"],
+      weights: { "mmlu-pro": 2 },
+      sort: { column: "gpqa-diamond", direction: "desc" },
+      search: "claude",
+      licenses: ["proprietary"],
+      providers: [],
+      comparedModelIds: ["claude-opus-4-6", "claude-sonnet-4-6"],
+    });
+    const expectedRows = sortModelsByColumn(
+      filterModels(models, { search: "claude", licenses: ["proprietary"] }),
+      { column: "gpqa-diamond", direction: "desc" },
+      { scores, benchmarkIds: ["mmlu-pro", "gpqa-diamond"], weights: { "mmlu-pro": 2 } },
+    );
+
+    await page.goto(`${base}/?${sharedQuery}`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    const names = await rowNames();
+    check(
+      "the shared URL restores the exact filtered, sorted, weighted view",
+      JSON.stringify(names) === JSON.stringify(expectedRows.map((model) => model.name)),
+      names.join(" | "),
+    );
+    check(
+      "the aggregate header reads Weighted Average (a weight is active on the selection)",
+      (await aggregateHeaderText()).startsWith("Weighted Average"),
+    );
+    check(
+      "the GPQA Diamond column announces the restored descending sort",
+      (await page.locator(`thead th:has-text("${gpqa.name}")`).first().getAttribute("aria-sort")) ===
+        "descending",
+    );
+    check(
+      "exactly the two shared Benchmarks are selected",
+      (await page.locator("fieldset.benchmarks-selection input:checked").count()) === 2,
+    );
+    check(
+      "the weight inputs restore: mmlu-pro 2, gpqa-diamond 1, and only selected Benchmarks listed",
+      (await page.locator("fieldset.weights-selection input[type=number]").count()) === 2 &&
+        (await page
+          .locator(`fieldset.weights-selection label.weight-option:has-text("${mmluPro.name}")`)
+          .locator("input")
+          .inputValue()) === "2" &&
+        (await page
+          .locator(`fieldset.weights-selection label.weight-option:has-text("${gpqa.name}")`)
+          .locator("input")
+          .inputValue()) === "1",
+    );
+    check(
+      "the search and the License filter restore",
+      (await page.locator('input[type="search"]').inputValue()) === "claude" &&
+        (await page.locator('fieldset:has(legend:text-is("License")) input:checked').count()) === 1,
+    );
+    check(
+      "the URL keeps the compared-Model parameter verbatim (reserved for the compare view)",
+      queryString().includes("compare=claude-opus-4-6,claude-sonnet-4-6"),
+      queryString(),
+    );
+
+    // Refreshing the shared URL keeps the view.
+    await page.reload({ waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const reloaded = await rowNames();
+    check(
+      "a refresh of the shared URL restores the same view again",
+      JSON.stringify(reloaded) === JSON.stringify(expectedRows.map((model) => model.name)),
+    );
+  });
+
+  await step("a shared URL with an explicit empty selection keeps meaning 'no Benchmark selected'", async () => {
+    await page.goto(`${base}/?benchmarks=`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    check(
+      "every aggregate renders n/a with (0/0) — never zero",
+      (await page.locator("tbody tr td.average-cell").first().textContent())?.includes("n/a (0/0)") ===
+        true,
+    );
+    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    check(
+      "the footer counts 0 selected Benchmarks",
+      footer.includes("Average over 0 selected Benchmarks"),
+      footer.slice(0, 80),
+    );
+    check(
+      "the weights fieldset states that no Benchmarks are selected",
+      ((await page.locator(".weights-empty").textContent()) ?? "").includes(
+        "No Benchmarks selected.",
+      ),
+    );
+    check("the URL keeps the explicit empty selection", queryString() === "benchmarks=", queryString());
   });
 }
 
