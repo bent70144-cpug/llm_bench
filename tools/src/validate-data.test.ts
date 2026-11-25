@@ -100,6 +100,30 @@ function writeFixture(overrides: Partial<DataFiles> = {}): string {
   return dir;
 }
 
+function firstScore(fixture: DataFiles): Record<string, unknown> {
+  const first = (fixture["scores.json"] as Array<Record<string, unknown>>)[0];
+  if (!first) {
+    throw new Error("fixture has no Score");
+  }
+  return first;
+}
+
+function firstModel(fixture: DataFiles): Record<string, unknown> {
+  const first = (fixture["models.json"] as Array<Record<string, unknown>>)[0];
+  if (!first) {
+    throw new Error("fixture has no Model");
+  }
+  return first;
+}
+
+function firstBenchmark(fixture: DataFiles): Record<string, unknown> {
+  const first = (fixture["benchmarks.json"] as Array<Record<string, unknown>>)[0];
+  if (!first) {
+    throw new Error("fixture has no Benchmark");
+  }
+  return first;
+}
+
 afterAll(() => {
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
@@ -115,7 +139,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Score references an unknown Model", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].modelId = "no-such-model";
+    firstScore(fixture).modelId = "no-such-model";
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -125,7 +149,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Score references an unknown Benchmark", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].benchmarkId = "no-such-benchmark";
+    firstScore(fixture).benchmarkId = "no-such-benchmark";
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -135,7 +159,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Score value is outside 0-100", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].value = 150;
+    firstScore(fixture).value = 150;
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -145,7 +169,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when publishedDate is after retrievedDate", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].publishedDate = "2026-03-01";
+    firstScore(fixture).publishedDate = "2026-03-01";
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -155,7 +179,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Model has one price but not the other", () => {
     const fixture = validFixture();
-    (fixture["models.json"] as Array<Record<string, unknown>>)[0].outputPricePer1M = null;
+    firstModel(fixture).outputPricePer1M = null;
 
     const result = runValidate(writeFixture({ "models.json": fixture["models.json"] }));
 
@@ -165,7 +189,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a null-priced Model names a Reference inference provider", () => {
     const fixture = validFixture();
-    const model = (fixture["models.json"] as Array<Record<string, unknown>>)[0];
+    const model = firstModel(fixture);
     model.inputPricePer1M = null;
     model.outputPricePer1M = null;
     model.referenceInferenceProvider = "Some Host";
@@ -178,7 +202,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero on a schema violation such as an invalid License", () => {
     const fixture = validFixture();
-    (fixture["models.json"] as Array<Record<string, unknown>>)[0].license = "source-available";
+    firstModel(fixture).license = "source-available";
 
     const result = runValidate(writeFixture({ "models.json": fixture["models.json"] }));
 
@@ -188,7 +212,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when an Evaluation setting is not in the vocabulary", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].evaluationSetting = "42-shot";
+    firstScore(fixture).evaluationSetting = "42-shot";
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -198,7 +222,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Benchmark is not higherIsBetter (v1 rule)", () => {
     const fixture = validFixture();
-    (fixture["benchmarks.json"] as Array<Record<string, unknown>>)[0].higherIsBetter = false;
+    firstBenchmark(fixture).higherIsBetter = false;
 
     const result = runValidate(writeFixture({ "benchmarks.json": fixture["benchmarks.json"] }));
 
@@ -231,7 +255,7 @@ describe("validate-data CLI", () => {
     const fixture = validFixture();
     const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
     scores.push({
-      ...scores[0],
+      ...firstScore(fixture),
       evaluationSetting: "0-shot",
       value: 60,
       isPrimary: true,
@@ -249,7 +273,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Model and Benchmark pair has Scores but no Primary score", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].isPrimary = false;
+    firstScore(fixture).isPrimary = false;
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
@@ -260,7 +284,7 @@ describe("validate-data CLI", () => {
   it("exits non-zero on a duplicate (Model, Benchmark, Evaluation setting) triple", () => {
     const fixture = validFixture();
     const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
-    scores.push({ ...scores[0], value: 80 });
+    scores.push({ ...firstScore(fixture), value: 80 });
 
     const result = runValidate(writeFixture({ "scores.json": scores }));
 
@@ -270,7 +294,7 @@ describe("validate-data CLI", () => {
 
   it("exits non-zero when a Primary score's Source type is not in the Benchmark's Canonical sources", () => {
     const fixture = validFixture();
-    (fixture["scores.json"] as Array<Record<string, unknown>>)[0].sourceType = "third-party";
+    firstScore(fixture).sourceType = "third-party";
 
     const result = runValidate(writeFixture({ "scores.json": fixture["scores.json"] }));
 
