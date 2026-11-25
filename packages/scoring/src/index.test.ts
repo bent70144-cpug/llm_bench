@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Benchmark, Model, Score } from "@llm-bench/schema";
-import { scores as publishedScores } from "@llm-bench/data";
+import {
+  benchmarks as publishedBenchmarks,
+  models as publishedModels,
+  scores as publishedScores,
+} from "@llm-bench/data";
 
 import {
   bestValueByBenchmark,
@@ -1399,5 +1403,81 @@ describe("leaderboard URL state (encode/decode)", () => {
 
     expect(state.providers).toEqual(["Former Labs"]);
     expect(state.comparedModelIds).toEqual(["retired-model", "still-here"]);
+  });
+});
+
+describe("Weighted Average against the real Published Results in @llm-bench/data", () => {
+  // Real pair (impl-04 data): over the default 12 core Benchmarks,
+  // Claude Opus 4.6 covers gpqa-diamond 91.31, aime-2025 99.79,
+  // tau2-bench 91.89, swebench-verified 75.6 → plain Average 358.59/4 =
+  // 89.6475. Claude Sonnet 4.6 covers swebench-verified 79.6,
+  // gpqa-diamond 89.9, aime-2025 95.6, tau2-bench 91.7 → 356.8/4 = 89.2.
+  // Opus leads. Weighting SWE-bench Verified ×2: Opus
+  // (91.31 + 99.79 + 91.89 + 2·75.6)/5 = 434.19/5 = 86.838; Sonnet
+  // (89.9 + 95.6 + 91.7 + 2·79.6)/5 = 436.4/5 = 87.28 — Sonnet overtakes.
+  const coreSelection = defaultSelectedBenchmarkIds(publishedBenchmarks);
+  const context = { scores: publishedScores, benchmarkIds: coreSelection };
+
+  it("reorders Claude Opus 4.6 and Claude Sonnet 4.6 when SWE-bench Verified counts double", () => {
+    const plain = rankModelsByAverage(publishedModels, context);
+    expect(plain.indexOf(publishedModels.find((m) => m.id === "claude-opus-4-6")!)).toBeLessThan(
+      plain.indexOf(publishedModels.find((m) => m.id === "claude-sonnet-4-6")!),
+    );
+
+    const weighted = rankModelsByAverage(publishedModels, {
+      ...context,
+      weights: { "swebench-verified": 2 },
+    });
+    expect(
+      weighted.indexOf(publishedModels.find((m) => m.id === "claude-sonnet-4-6")!),
+    ).toBeLessThan(weighted.indexOf(publishedModels.find((m) => m.id === "claude-opus-4-6")!));
+  });
+
+  it("computes the hand-computed Weighted Averages for the pair", () => {
+    const opus = computeWeightedAverage("claude-opus-4-6", publishedScores, {
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+    });
+    const sonnet = computeWeightedAverage("claude-sonnet-4-6", publishedScores, {
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+    });
+
+    expect(opus.average).toBeCloseTo(86.838, 3);
+    expect(sonnet.average).toBeCloseTo(87.28, 3);
+    // Coverage is unweighted: still 4 of the 12 selected Benchmarks each.
+    expect(formatCoverage(opus)).toBe("(4/12)");
+    expect(formatCoverage(sonnet)).toBe("(4/12)");
+  });
+
+  it("encodes the shared URL for that weighted view and decodes it back exactly", () => {
+    // The URL a visitor shares after weighting SWE-bench Verified ×2 over
+    // the default core selection: only the non-default weight appears.
+    const query = encodeLeaderboardUrlState({
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      comparedModelIds: [],
+    });
+    expect(query).toBe(
+      "benchmarks=mmlu-pro,mmlu,gpqa-diamond,bbh,math-500,aime-2025,humaneval,livecodebench," +
+        "swebench-verified,tau2-bench,ifeval,hellaswag&weights=swebench-verified:2",
+    );
+
+    expect(decodeLeaderboardUrlState(query, publishedBenchmarks)).toEqual({
+      benchmarkIds: coreSelection,
+      weights: { "swebench-verified": 2 },
+      sort: DEFAULT_LEADERBOARD_SORT,
+      search: "",
+      licenses: [],
+      providers: [],
+      minContextWindow: undefined,
+      maxInputPricePer1M: undefined,
+      maxOutputPricePer1M: undefined,
+      comparedModelIds: [],
+    });
   });
 });
