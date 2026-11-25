@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import type { Benchmark } from "@llm-bench/schema";
+import { defaultSelectedBenchmarkIds } from "@llm-bench/scoring";
 import { DATA_FILE_NAMES, runManage } from "./cli-test-utils";
 
 /**
@@ -102,6 +104,46 @@ describe("leaderboard end-to-end proof", () => {
       }
       // The rebuilt leaderboard no longer contains the fixture Model.
       expect(readBuiltBundle()).not.toContain(PROOF_MODEL.name);
+    },
+    480_000,
+  );
+
+  it(
+    "renders the full Benchmark catalogue with a Tier-driven default selection",
+    () => {
+      const catalogue = JSON.parse(
+        readFileSync(path.join(DATA_DIR, "benchmarks.json"), "utf8"),
+      ) as Benchmark[];
+      expect(catalogue).toHaveLength(17);
+
+      const build = runBuild();
+      expect(build.status).toBe(0);
+
+      const bundle = readBuiltBundle();
+
+      // The leaderboard renders 100% from the data package, so every
+      // Benchmark name — column or selection control — must be in the bundle.
+      for (const benchmark of catalogue) {
+        expect(bundle).toContain(benchmark.name);
+      }
+
+      // Tier drives the default selection: running the real derivation over
+      // the real catalogue selects exactly the 12 core-Tier Benchmarks and
+      // leaves the 5 extended-Tier ones unselected…
+      const coreIds = catalogue.filter((b) => b.tier === "core").map((b) => b.id);
+      const extendedIds = catalogue.filter((b) => b.tier === "extended").map((b) => b.id);
+      expect(coreIds).toHaveLength(12);
+      expect(extendedIds).toHaveLength(5);
+      expect([...defaultSelectedBenchmarkIds(catalogue)].sort()).toEqual([...coreIds].sort());
+
+      // …and the shipped bundle carries both the catalogue data (12 core-Tier
+      // and 5 extended-Tier Benchmark records) and the Tier-derived selection
+      // logic that defaults the selection to the core Tier.
+      expect(bundle.match(/"tier":"core"/g)).toHaveLength(12);
+      expect(bundle.match(/"tier":"extended"/g)).toHaveLength(5);
+      expect(bundle).toMatch(
+        /\.tier\s*===?\s*["'`]core["'`]|["'`]core["'`]\s*===?\s*[A-Za-z_$][\w$]*\.tier/,
+      );
     },
     480_000,
   );
