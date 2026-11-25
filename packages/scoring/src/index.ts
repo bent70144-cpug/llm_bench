@@ -4,6 +4,7 @@ import {
   type License,
   type Model,
   type Score,
+  type SourceType,
 } from "@llm-bench/schema";
 
 /**
@@ -730,5 +731,181 @@ export function decodeLeaderboardUrlState(
     maxInputPricePer1M: decodeNonNegativeNumber(params.get("max-input-price")),
     maxOutputPricePer1M: decodeNonNegativeNumber(params.get("max-output-price")),
     comparedModelIds: splitList(params.get("compare") ?? ""),
+  };
+}
+
+// --- View and full-dataset exports ------------------------------------------
+
+/**
+ * Everything the default view export needs: the data package plus the view
+ * being exported. The rows arrive already filtered and sorted by the
+ * leaderboard — the export is a faithful snapshot of that exact view, so it
+ * can never diverge from what the visitor sees at click time.
+ */
+export interface ViewExportInput {
+  /** The current filtered, sorted rows, in display order. */
+  rows: readonly Model[];
+  /** The Benchmark catalogue; the export's Benchmark columns follow it. */
+  benchmarks: readonly Benchmark[];
+  /** All Scores; Primary scores feed the exported values and provenance. */
+  scores: readonly Score[];
+  /** The active view state: selection, weights, sort, and filters. */
+  state: LeaderboardUrlState;
+  /** ISO 8601 timestamp recorded in the export. */
+  exportedAt: string;
+}
+
+/** A Primary score with its full provenance, as exported for one pair. */
+export interface ExportedScore {
+  value: number;
+  evaluationSetting: string;
+  sourceType: SourceType;
+  sourceUrl: string;
+  publishedDate: string;
+  retrievedDate: string;
+  verified: boolean;
+  isPrimary: true;
+}
+
+/** One exported row: the Model's fields, the active aggregate, its Coverage, and its Primary scores. */
+export interface ViewExportRow {
+  model: {
+    id: string;
+    name: string;
+    provider: string;
+    license: License;
+    licenseName: string | null;
+    releaseDate: string;
+    contextWindow: number;
+    inputPricePer1M: number | null;
+    outputPricePer1M: number | null;
+    referenceInferenceProvider: string | null;
+  };
+  /**
+   * The active aggregate — the Average, or the Weighted Average when weights
+   * are active on the selection — at full stored precision. Null when the
+   * Model's Coverage is 0, never zero.
+   */
+  average: number | null;
+  /** Coverage against the active selection, as (covered/selected). */
+  coverage: { covered: number; selected: number };
+  /**
+   * One entry per selected Benchmark (in catalogue order): its Primary score
+   * with provenance, or null when the Model has no Primary score for it.
+   */
+  scores: Readonly<Record<string, ExportedScore | null>>;
+}
+
+/** The self-describing metadata block of a view export. */
+export interface ViewExportMetadata {
+  kind: "llm-bench-view";
+  formatVersion: 1;
+  exportedAt: string;
+  /** Which aggregate the `average` field holds, per the active weights. */
+  aggregate: "Average" | "Weighted Average";
+  /** The selected Benchmarks, in catalogue (column) order. */
+  selectedBenchmarks: readonly { id: string; name: string }[];
+  /** The canonical per-Benchmark weights, as carried in the shared URL. */
+  weights: BenchmarkWeights;
+  sort: LeaderboardSort;
+  filters: {
+    search: string;
+    licenses: readonly License[];
+    providers: readonly string[];
+    minContextWindow: number | null;
+    maxInputPricePer1M: number | null;
+    maxOutputPricePer1M: number | null;
+  };
+  rowCount: number;
+}
+
+/** The default export: the current view as structured JSON. */
+export interface ViewExport {
+  metadata: ViewExportMetadata;
+  rows: ViewExportRow[];
+}
+
+/**
+ * Builds the default view export: the current filtered, sorted rows with the
+ * selected Benchmark columns (Primary scores only, with full provenance), the
+ * active aggregate (Average, or Weighted Average when weights are active on
+ * the selection), Coverage, and a metadata block recording the selection,
+ * weights, sort, filters, and export timestamp — so the file is
+ * self-describing. Pure: nothing is recomputed from the filters; the rows are
+ * exported exactly as passed in.
+ */
+export function buildViewExport(input: ViewExportInput): ViewExport {
+  const { rows, benchmarks, scores, state, exportedAt } = input;
+  const columns = selectedBenchmarks(benchmarks, state.benchmarkIds);
+  const weighted = weightsAreActive(state.weights, state.benchmarkIds);
+
+  const viewRows: ViewExportRow[] = rows.map((model) => {
+    const result = weighted
+      ? computeWeightedAverage(model.id, scores, {
+          benchmarkIds: state.benchmarkIds,
+          weights: state.weights,
+        })
+      : computeAverage(model.id, scores, { benchmarkIds: state.benchmarkIds });
+
+    const exportedScores: Record<string, ExportedScore | null> = {};
+    for (const benchmark of columns) {
+      const score = primaryScoreFor(model.id, benchmark.id, scores);
+      exportedScores[benchmark.id] =
+        score === undefined
+          ? null
+          : {
+              value: score.value,
+              evaluationSetting: score.evaluationSetting,
+              sourceType: score.sourceType,
+              sourceUrl: score.sourceUrl,
+              publishedDate: score.publishedDate,
+              retrievedDate: score.retrievedDate,
+              verified: score.verified,
+              isPrimary: true,
+            };
+    }
+
+    return {
+      model: {
+        id: model.id,
+        name: model.name,
+        provider: model.provider,
+        license: model.license,
+        licenseName: model.licenseName ?? null,
+        releaseDate: model.releaseDate,
+        contextWindow: model.contextWindow,
+        inputPricePer1M: model.inputPricePer1M,
+        outputPricePer1M: model.outputPricePer1M,
+        referenceInferenceProvider: model.referenceInferenceProvider,
+      },
+      average: result.average,
+      coverage: { covered: result.coverage, selected: result.selected },
+      scores: exportedScores,
+    };
+  });
+
+  return {
+    metadata: {
+      kind: "llm-bench-view",
+      formatVersion: 1,
+      exportedAt,
+      aggregate: weighted ? "Weighted Average" : "Average",
+      selectedBenchmarks: columns.map((benchmark) => ({
+        id: benchmark.id,
+        name: benchmark.name,
+      })),
+      weights: state.weights,
+      sort: state.sort,
+      filters: {
+        search: state.search,
+        licenses: state.licenses,
+        providers: state.providers,
+        minContextWindow: state.minContextWindow ?? null,
+        maxInputPricePer1M: state.maxInputPricePer1M ?? null,
+        maxOutputPricePer1M: state.maxOutputPricePer1M ?? null,
+      },
+      rowCount: rows.length,
+    },
+    rows: viewRows,
   };
 }
