@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   LICENSE_VALUES,
   type Benchmark,
@@ -10,14 +10,20 @@ import { benchmarks, models, scores } from "@llm-bench/data";
 import {
   bestValueByBenchmark,
   computeAverage,
-  defaultSelectedBenchmarkIds,
+  computeWeightedAverage,
+  decodeLeaderboardUrlState,
+  encodeLeaderboardUrlState,
   filterModels,
   formatCoverage,
   isUnderHalfCoverage,
   primaryScoreFor,
   selectedBenchmarks,
   sortModelsByColumn,
+  weightsAreActive,
+  type AverageResult,
+  type BenchmarkWeights,
   type LeaderboardSort,
+  type LeaderboardUrlState,
   type ModelColumnId,
   type ModelQuery,
   type SortColumn,
@@ -35,6 +41,11 @@ import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
  * one column per selected Benchmark, so a new Benchmark in the data package
  * produces its column (and its selection control, and its detail page link)
  * with no UI change.
+ *
+ * The whole view — Benchmark selection, per-Benchmark weights, sorting,
+ * search, and filters — is shareable URL state: it is decoded from the URL
+ * on load and written back with replaceState on every change (no history
+ * spam), so refreshing or opening a shared URL restores the exact view.
  */
 
 /** The fixed columns derived from the Model schema fields. */
@@ -62,6 +73,9 @@ const MODEL_COLUMNS: readonly ModelColumn[] = [
     title: "Output price per 1M tokens",
     align: "right",
   },
+  // The aggregate column: its label reads "Weighted Average" exactly when
+  // a weight is active on the selection, so the visitor can tell which
+  // number they are reading. The sort column id stays "average".
   { id: "average", label: "Average", align: "right" },
   { id: "coverage", label: "Coverage", align: "right" },
 ];
@@ -139,23 +153,51 @@ function SortableTh({
 }
 
 export function LeaderboardPage() {
-  // Tier drives the default Benchmark selection (core selected, extended not).
-  const [selectedBenchmarkIds, setSelectedBenchmarkIds] = useState<string[]>(() =>
-    defaultSelectedBenchmarkIds(benchmarks),
+  // The view loads from the URL (shared links and refresh restore the exact
+  // selection, weights, sorting, search, and filters) and falls back to the
+  // Tier-driven defaults when the URL carries no state.
+  const [initialUrlState] = useState(() =>
+    decodeLeaderboardUrlState(window.location.search, benchmarks),
   );
-  const [search, setSearch] = useState("");
-  const [selectedLicenses, setSelectedLicenses] = useState<readonly License[]>([]);
-  const [selectedProviders, setSelectedProviders] = useState<readonly string[]>([]);
-  const [minContextWindow, setMinContextWindow] = useState("");
-  const [maxInputPrice, setMaxInputPrice] = useState("");
-  const [maxOutputPrice, setMaxOutputPrice] = useState("");
-  // The leaderboard opens on the ranking: Average descending with the
-  // deterministic tie-breaks (equal Averages by higher Coverage, then Model
-  // name; null-Average Models last) — computed by @llm-bench/scoring.
-  const [sort, setSort] = useState<LeaderboardSort>({
-    column: "average",
-    direction: "desc",
-  });
+  const [selectedBenchmarkIds, setSelectedBenchmarkIds] = useState<readonly string[]>(
+    initialUrlState.benchmarkIds,
+  );
+  // Weight inputs keep their raw draft text per Benchmark ("2", "0.5", …)
+  // so typing is never fought; the canonical weights are derived from the
+  // drafts. Drafts of unselected Benchmarks are remembered, so re-selecting
+  // a Benchmark restores its weight.
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      Object.entries(initialUrlState.weights).map(([id, weight]) => [id, String(weight)]),
+    ),
+  );
+  const [search, setSearch] = useState(initialUrlState.search);
+  const [selectedLicenses, setSelectedLicenses] = useState<readonly License[]>(
+    initialUrlState.licenses,
+  );
+  const [selectedProviders, setSelectedProviders] = useState<readonly string[]>(
+    initialUrlState.providers,
+  );
+  const [minContextWindow, setMinContextWindow] = useState(
+    initialUrlState.minContextWindow === undefined ? "" : String(initialUrlState.minContextWindow),
+  );
+  const [maxInputPrice, setMaxInputPrice] = useState(
+    initialUrlState.maxInputPricePer1M === undefined
+      ? ""
+      : String(initialUrlState.maxInputPricePer1M),
+  );
+  const [maxOutputPrice, setMaxOutputPrice] = useState(
+    initialUrlState.maxOutputPricePer1M === undefined
+      ? ""
+      : String(initialUrlState.maxOutputPricePer1M),
+  );
+  // The leaderboard opens on the ranking: the active aggregate (Average, or
+  // Weighted Average when weights are active) descending with the
+  // deterministic tie-breaks — computed by @llm-bench/scoring.
+  const [sort, setSort] = useState<LeaderboardSort>(initialUrlState.sort);
+  // Compared Model ids are reserved for the compare view (ticket 10): the
+  // URL round-trips them already, so that view never changes the format.
+  const [comparedModelIds] = useState<readonly string[]>(initialUrlState.comparedModelIds);
   // Score provenance (ticket 07): the tooltip anchors to the hovered or
   // focused score cell; the Score details panel opens for one pair.
   const tooltipId = useId();
@@ -178,6 +220,26 @@ export function LeaderboardPage() {
     [],
   );
 
+  // The canonical weights: every Benchmark whose draft is a finite number
+  // ≥ 0 other than the default 1 (invalid drafts are simply the default —
+  // defaults win). Weights on unselected Benchmarks are remembered but do
+  // not switch the aggregate label: they do not change the displayed number.
+  const weights = useMemo<BenchmarkWeights>(() => {
+    const canonical: Record<string, number> = {};
+    for (const benchmark of benchmarks) {
+      const draft = weightDrafts[benchmark.id];
+      if (draft === undefined) continue;
+      const parsed = Number(draft);
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed !== 1) {
+        canonical[benchmark.id] = parsed;
+      }
+    }
+    return canonical;
+  }, [weightDrafts]);
+  const aggregateLabel = weightsAreActive(weights, selectedBenchmarkIds)
+    ? "Weighted Average"
+    : "Average";
+
   const query: ModelQuery = useMemo(
     () => ({
       search,
@@ -192,18 +254,82 @@ export function LeaderboardPage() {
 
   const filteredModels = useMemo(() => filterModels(models, query), [query]);
   const leaderboardContext = useMemo(
-    () => ({ scores, benchmarkIds: selectedBenchmarkIds }),
-    [selectedBenchmarkIds],
+    () => ({ scores, benchmarkIds: selectedBenchmarkIds, weights }),
+    [selectedBenchmarkIds, weights],
   );
   const rows = useMemo(
     () => sortModelsByColumn(filteredModels, sort, leaderboardContext),
     [filteredModels, sort, leaderboardContext],
   );
 
+  // The active aggregate of one Model: the Weighted Average when weights
+  // are active on the selection, the plain Average otherwise.
+  const aggregateFor = (modelId: string): AverageResult =>
+    weightsAreActive(weights, selectedBenchmarkIds)
+      ? computeWeightedAverage(modelId, scores, {
+          benchmarkIds: selectedBenchmarkIds,
+          weights,
+        })
+      : computeAverage(modelId, scores, { benchmarkIds: selectedBenchmarkIds });
+
+  // The whole view is URL state: every change is written back with
+  // replaceState (no history spam), so the URL is always a shareable link
+  // and a refresh restores the exact view.
+  const urlState = useMemo<LeaderboardUrlState>(
+    () => ({
+      benchmarkIds: selectedBenchmarkIds,
+      weights,
+      sort,
+      search,
+      licenses: selectedLicenses,
+      providers: selectedProviders,
+      minContextWindow: minContextWindow === "" ? undefined : Number(minContextWindow),
+      maxInputPricePer1M: maxInputPrice === "" ? undefined : Number(maxInputPrice),
+      maxOutputPricePer1M: maxOutputPrice === "" ? undefined : Number(maxOutputPrice),
+      comparedModelIds,
+    }),
+    [
+      selectedBenchmarkIds,
+      weights,
+      sort,
+      search,
+      selectedLicenses,
+      selectedProviders,
+      minContextWindow,
+      maxInputPrice,
+      maxOutputPrice,
+      comparedModelIds,
+    ],
+  );
+
+  useEffect(() => {
+    const query = encodeLeaderboardUrlState(urlState);
+    const nextUrl = `${window.location.pathname}?${query}`;
+    if (nextUrl !== window.location.pathname + window.location.search) {
+      window.history.replaceState({}, "", nextUrl);
+    }
+  }, [urlState]);
+
   function handleSortClick(column: SortColumn): void {
     setSort((current) => {
       if (current?.column !== column) return { column, direction: "asc" };
       return { column: current.column, direction: current.direction === "asc" ? "desc" : "asc" };
+    });
+  }
+
+  // The selection is kept in catalogue order, so the URL's benchmarks=
+  // parameter is stable no matter the order Benchmarks were toggled in.
+  function handleBenchmarkToggle(benchmarkId: string): void {
+    setSelectedBenchmarkIds((current) => {
+      const next = new Set(current);
+      if (next.has(benchmarkId)) {
+        next.delete(benchmarkId);
+      } else {
+        next.add(benchmarkId);
+      }
+      return benchmarks
+        .filter((benchmark) => next.has(benchmark.id))
+        .map((benchmark) => benchmark.id);
     });
   }
 
@@ -293,9 +419,7 @@ export function LeaderboardPage() {
               <input
                 type="checkbox"
                 checked={selectedBenchmarkIds.includes(benchmark.id)}
-                onChange={() =>
-                  setSelectedBenchmarkIds((current) => toggleIn(current, benchmark.id))
-                }
+                onChange={() => handleBenchmarkToggle(benchmark.id)}
               />
               <Link to={benchmarkPath(benchmark.id)}>{benchmark.name}</Link>
               <span className="benchmark-meta">
@@ -303,6 +427,36 @@ export function LeaderboardPage() {
               </span>
             </label>
           ))}
+        </fieldset>
+
+        <fieldset className="weights-selection">
+          <legend>Benchmark weights</legend>
+          <p className="weights-hint">
+            The default weight is 1. A weight of 0 excludes a Benchmark from the Weighted
+            Average while keeping it selected for Coverage; a weight below or above 1 scales
+            its contribution.
+          </p>
+          {visibleBenchmarks.length === 0 ? (
+            <p className="weights-empty">No Benchmarks selected.</p>
+          ) : (
+            visibleBenchmarks.map((benchmark) => (
+              <label key={benchmark.id} className="number-control weight-option">
+                {`Weight — ${benchmark.name}`}
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={weightDrafts[benchmark.id] ?? "1"}
+                  onChange={(event) =>
+                    setWeightDrafts((current) => ({
+                      ...current,
+                      [benchmark.id]: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+            ))
+          )}
         </fieldset>
       </section>
 
@@ -314,7 +468,7 @@ export function LeaderboardPage() {
                 <SortableTh
                   key={column.id}
                   columnId={column.id}
-                  label={column.label}
+                  label={column.id === "average" ? aggregateLabel : column.label}
                   title={column.title}
                   align={column.align}
                   sort={sort}
@@ -344,9 +498,7 @@ export function LeaderboardPage() {
               </tr>
             ) : (
               rows.map((model) => {
-                const { average, coverage, selected } = computeAverage(model.id, scores, {
-                  benchmarkIds: selectedBenchmarkIds,
-                });
+                const { average, coverage, selected } = aggregateFor(model.id);
                 return (
                   <tr key={model.id}>
                     <th scope="row">{model.name}</th>
@@ -439,13 +591,22 @@ export function LeaderboardPage() {
         </table>
       </div>
       <p className="table-note">
-        Average over {selectedBenchmarkIds.length} selected
+        {aggregateLabel === "Weighted Average" ? "Weighted Average over" : "Average over"}{" "}
+        {selectedBenchmarkIds.length} selected
         Benchmark{selectedBenchmarkIds.length === 1 ? "" : "s"}, from Primary scores only:
-        every Average is shown with its Coverage as (n/{selectedBenchmarkIds.length}), and
-        Models under 50% Coverage of the active selection carry an &ldquo;Under 50%
+        every {aggregateLabel} is shown with its Coverage as (n/{selectedBenchmarkIds.length}),
+        and Models under 50% Coverage of the active selection carry an &ldquo;Under 50%
         Coverage&rdquo; badge. The best Score per Benchmark is highlighted. Missing Scores are
         shown as &ldquo;n/a&rdquo;, never as zero, and each Score links to its published source.
         Each Benchmark&rsquo;s name links to its detail page.
+        {aggregateLabel === "Weighted Average" ? (
+          <>
+            {" "}
+            Weights are visitor-assigned per Benchmark; a Model missing a Benchmark is not
+            penalized — the Weighted Average normalizes over the weights of the Benchmarks the
+            Model actually has, while Coverage stays unweighted.
+          </>
+        ) : null}
       </p>
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for
