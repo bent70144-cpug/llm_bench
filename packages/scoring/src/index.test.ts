@@ -3,11 +3,14 @@ import type { Benchmark, Model, Score } from "@llm-bench/schema";
 import {
   benchmarks as publishedBenchmarks,
   models as publishedModels,
+  pricingConfig as publishedPricingConfig,
   scores as publishedScores,
 } from "@llm-bench/data";
 
 import {
+  activeAggregateResult,
   bestValueByBenchmark,
+  blendedPricePer1M,
   computeAverage,
   computeWeightedAverage,
   decodeLeaderboardUrlState,
@@ -1605,6 +1608,134 @@ describe("leaderboard URL state (encode/decode)", () => {
 
     expect(state.providers).toEqual(["Former Labs"]);
     expect(state.comparedModelIds).toEqual(["retired-model", "still-here"]);
+  });
+});
+
+describe("blendedPricePer1M", () => {
+  // The published ratio (packages/data/pricing-config.json) is 3:1, and the
+  // divisor is the weight sum (3 + 1 = 4), never stored: a Model priced
+  // 3 in / 15 out blends to (3·3 + 1·15)/4 = 24/4 = 6.
+  const threeToOne = { inputWeight: 3, outputWeight: 1 };
+
+  it("computes (inputWeight·input + outputWeight·output) / (inputWeight + outputWeight) for the 3:1 config", () => {
+    // Hand-computed: (3·3 + 1·15)/4 = 6.
+    expect(blendedPricePer1M(makeModel({ inputPricePer1M: 3, outputPricePer1M: 15 }), threeToOne)).toBe(6);
+    // Fractional prices: (3·0.5 + 1·2.5)/4 = 4/4 = 1.
+    expect(blendedPricePer1M(makeModel({ inputPricePer1M: 0.5, outputPricePer1M: 2.5 }), threeToOne)).toBe(1);
+    // The fixture defaults (1.5 in / 3 out): (4.5 + 3)/4 = 1.875.
+    expect(blendedPricePer1M(makeModel(), threeToOne)).toBe(1.875);
+  });
+
+  it("returns null when either price is null — never a made-up number", () => {
+    // The price invariant (both present or both null) makes the first case
+    // the real one; a half-null record is still null, never zero.
+    expect(
+      blendedPricePer1M(
+        makeModel({ inputPricePer1M: null, outputPricePer1M: null }),
+        threeToOne,
+      ),
+    ).toBeNull();
+    expect(
+      blendedPricePer1M(makeModel({ inputPricePer1M: 3, outputPricePer1M: null }), threeToOne),
+    ).toBeNull();
+    expect(
+      blendedPricePer1M(makeModel({ inputPricePer1M: null, outputPricePer1M: 15 }), threeToOne),
+    ).toBeNull();
+  });
+
+  it("takes the ratio from the pricing config data, not from code", () => {
+    const model = makeModel({ inputPricePer1M: 3, outputPricePer1M: 15 });
+
+    // A different methodology is a data change: 1:1 → (3 + 15)/2 = 9.
+    expect(blendedPricePer1M(model, { inputWeight: 1, outputWeight: 1 })).toBe(9);
+    // Output-heavy: 1:3 → (3 + 3·15)/4 = 48/4 = 12.
+    expect(blendedPricePer1M(model, { inputWeight: 1, outputWeight: 3 })).toBe(12);
+    // Equal weights of any size agree: 2:2 → (2·3 + 2·15)/4 = 9, and the
+    // divisor is the weight sum: 0.5:0.5 → (1.5 + 7.5)/1 = 9.
+    expect(blendedPricePer1M(model, { inputWeight: 2, outputWeight: 2 })).toBe(9);
+    expect(blendedPricePer1M(model, { inputWeight: 0.5, outputWeight: 0.5 })).toBe(9);
+  });
+
+  it("reads the published 3:1 config over the real Models", () => {
+    expect(publishedPricingConfig).toEqual({ inputWeight: 3, outputWeight: 1 });
+
+    // Hand-computed from models.json: Kimi K3 (3 in / 15 out) → 6;
+    // Claude Opus 4.6 (5 / 25) → 10; Kimi K2.5 (0.5 / 2.5) → 1;
+    // GPT-6.2 Astra (8 / 40) → 16.
+    const byId = (id: string): Model => publishedModels.find((model) => model.id === id)!;
+    expect(blendedPricePer1M(byId("kimi-k3"), publishedPricingConfig)).toBe(6);
+    expect(blendedPricePer1M(byId("claude-opus-4-6"), publishedPricingConfig)).toBe(10);
+    expect(blendedPricePer1M(byId("kimi-k2-5"), publishedPricingConfig)).toBe(1);
+    expect(blendedPricePer1M(byId("gpt-6-2-astra"), publishedPricingConfig)).toBe(16);
+
+    // Every null-priced Model in the real dataset blends to null — the
+    // Models the price chart lists as "Self-hosted / no public API rate".
+    const nullPriced = publishedModels.filter((model) => model.inputPricePer1M === null);
+    expect(nullPriced.map((model) => model.id)).toEqual([
+      "gemini-3-pro",
+      "deepseek-v4-pro",
+      "deepseek-v4-pro-base",
+      "deepseek-v4-1-flash",
+      "minimax-m2",
+      "llama-4-maverick",
+      "llama-4-maverick-base",
+      "kimi-k2-thinking",
+    ]);
+    for (const model of nullPriced) {
+      expect(blendedPricePer1M(model, publishedPricingConfig)).toBeNull();
+    }
+  });
+});
+
+describe("activeAggregateResult", () => {
+  // Two Models whose plain and weighted aggregates differ, over the shared
+  // two-Benchmark fixture (bench-1, bench-2).
+  const contextScores: Score[] = [
+    makeScore({ modelId: "model-a", benchmarkId: "bench-1", value: 80 }),
+    makeScore({ modelId: "model-a", benchmarkId: "bench-2", value: 90 }),
+  ];
+
+  it("returns the plain Average when no weights are given", () => {
+    expect(activeAggregateResult("model-a", { scores: contextScores, benchmarkIds: ["bench-1", "bench-2"] })).toEqual(
+      computeAverage("model-a", contextScores, { benchmarkIds: ["bench-1", "bench-2"] }),
+    );
+  });
+
+  it("returns the Weighted Average exactly when the weights are active on the selection", () => {
+    const weights = { "bench-1": 3 };
+    const context = { scores: contextScores, benchmarkIds: ["bench-1", "bench-2"], weights };
+
+    // Hand-computed: (3·80 + 1·90)/(3 + 1) = 330/4 = 82.5.
+    expect(activeAggregateResult("model-a", context)).toEqual({
+      average: 82.5,
+      coverage: 2,
+      selected: 2,
+    });
+    expect(activeAggregateResult("model-a", context)).toEqual(
+      computeWeightedAverage("model-a", contextScores, {
+        benchmarkIds: ["bench-1", "bench-2"],
+        weights,
+      }),
+    );
+  });
+
+  it("keeps the plain Average when the weights are present but inactive (default 1, or off-selection)", () => {
+    // An explicit default weight of 1 is not active …
+    expect(
+      activeAggregateResult("model-a", {
+        scores: contextScores,
+        benchmarkIds: ["bench-1", "bench-2"],
+        weights: { "bench-1": 1, "bench-2": 1 },
+      }),
+    ).toEqual({ average: 85, coverage: 2, selected: 2 });
+    // … and neither is a non-default weight on a Benchmark outside the selection.
+    expect(
+      activeAggregateResult("model-a", {
+        scores: contextScores,
+        benchmarkIds: ["bench-1", "bench-2"],
+        weights: { "bench-9": 4 },
+      }),
+    ).toEqual({ average: 85, coverage: 2, selected: 2 });
   });
 });
 

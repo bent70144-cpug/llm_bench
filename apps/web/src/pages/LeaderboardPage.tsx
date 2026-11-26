@@ -30,6 +30,7 @@ import {
 } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath, COMPARE_PATH, modelPath } from "../routes";
+import { PricePerformanceChart } from "../components/PricePerformanceChart";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
 import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
@@ -663,6 +664,16 @@ export function LeaderboardPage() {
           </>
         ) : null}
       </p>
+
+      {/* Price vs performance (ticket 11): the same filtered Models and the
+          same active aggregate (Average, or Weighted Average when weights are
+          active) as the table, plotted against a visitor-chosen price basis. */}
+      <PricePerformanceChart
+        models={filteredModels}
+        scores={scores}
+        benchmarkIds={selectedBenchmarkIds}
+        weights={weights}
+      />
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for
           the hovered/focused score cell, and the Score details panel. */}
