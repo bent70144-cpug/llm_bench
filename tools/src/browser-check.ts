@@ -1184,8 +1184,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       ["description text", "p.page-intro"],
       ["Canonical sources entry", ".canonical-sources li"],
       ["Canonical sources URL pattern hint", ".url-patterns"],
-      ["Current best Score entry", ".best-scores li"],
-      ["best-Score source link", ".best-scores a"],
+      ["Current best Primary score entry", ".best-scores li"],
+      ["best-Primary-score source link", ".best-scores a"],
     ];
     await page.goto(`${base}/benchmarks/${auditBenchmark.id}`, { waitUntil: "load" });
     await page.locator("h1").first().waitFor({ state: "visible" });

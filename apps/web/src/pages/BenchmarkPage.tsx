@@ -26,7 +26,7 @@ export function BenchmarkPage({ benchmarkId }: { benchmarkId: string }) {
     );
   }
 
-  // The current best Score on this Benchmark, from Primary scores only
+  // The current best Primary score on this Benchmark, across all Models
   // (bestValueByBenchmark ignores alternate Evaluation settings).
   const bestValue = bestValueByBenchmark(scores).get(benchmark.id);
   const leaders =
@@ -102,7 +102,7 @@ export function BenchmarkPage({ benchmarkId }: { benchmarkId: string }) {
       </section>
 
       <section>
-        <h2>Current best Score</h2>
+        <h2>Current best Primary score</h2>
         {leaders.length === 0 ? (
           <p>
             <span className="missing">n/a</span> — no Primary scores have been published

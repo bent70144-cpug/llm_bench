@@ -155,7 +155,7 @@ drift stale in the harmless direction.
   `models-meta-mistral-kimi.md`, `models-openai.md`, `models-openai-sol.md`,
   `models-xai.md` in the workspace `notes/llm-bench/` directory — working
   documents, not part of this repository) ends with an UNVERIFIED list:
-  numbers, prices, and license terms that could not be confirmed against a
+  numbers, prices, and License names that could not be confirmed against a
   live source on 2026-11-26. None of them was transcribed into
   `packages/data`. The data package contains only Published Results whose
   value, Evaluation setting, and provenance were confirmed against the
