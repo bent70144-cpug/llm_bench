@@ -20,8 +20,10 @@
   },
   "devDependencies": {
     "@llm-bench/config": "workspace:*",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.0.0",
     "eslint": "^9.39.5",
+    "js-yaml": "^4.3.2",
     "typescript": "^5.9.3",
     "vitest": "^5.1.2"
   }
