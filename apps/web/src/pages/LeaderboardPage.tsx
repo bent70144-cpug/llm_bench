@@ -29,7 +29,7 @@ import {
   type SortColumn,
 } from "@llm-bench/scoring";
 import { Link } from "../router";
-import { benchmarkPath, modelPath } from "../routes";
+import { benchmarkPath, COMPARE_PATH, modelPath } from "../routes";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
 import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
@@ -195,9 +195,14 @@ export function LeaderboardPage() {
   // Weighted Average when weights are active) descending with the
   // deterministic tie-breaks — computed by @llm-bench/scoring.
   const [sort, setSort] = useState<LeaderboardSort>(initialUrlState.sort);
-  // Compared Model ids are reserved for the compare view (ticket 10): the
-  // URL round-trips them already, so that view never changes the format.
-  const [comparedModelIds] = useState<readonly string[]>(initialUrlState.comparedModelIds);
+  // Compared Model ids (ticket 10): the 2 to 4 Models the visitor picks for
+  // the side-by-side comparison. They ride in the URL `compare` parameter
+  // verbatim (kept as decoded — a stale id in a shared link stays honest
+  // until the compare view drops it with a note), so the selection is
+  // shareable and survives refresh.
+  const [comparedModelIds, setComparedModelIds] = useState<readonly string[]>(
+    initialUrlState.comparedModelIds,
+  );
   // Score provenance (ticket 07): the tooltip anchors to the hovered or
   // focused score cell; the Score details panel opens for one pair.
   const tooltipId = useId();
@@ -333,6 +338,18 @@ export function LeaderboardPage() {
     });
   }
 
+  // A comparison shows 2 to 4 Models: unchecking always works, and once 4
+  // ids are selected the other rows' checkboxes disable (the guard is here
+  // as well — the compare view also defends its own rails).
+  function handleCompareToggle(modelId: string): void {
+    setComparedModelIds((current) => {
+      if (current.includes(modelId)) {
+        return current.filter((id) => id !== modelId);
+      }
+      return current.length >= 4 ? current : [...current, modelId];
+    });
+  }
+
   return (
     <>
       <h1>LLM Bench</h1>
@@ -460,10 +477,30 @@ export function LeaderboardPage() {
         </fieldset>
       </section>
 
+      {/* The compare affordance (ticket 10): the per-row Compare checkboxes
+          above, and here the control that opens the side-by-side view once
+          2 to 4 Models are selected. It is a real link carrying the whole
+          shared URL state, so a comparison is itself a shareable link. */}
+      <div className="compare-controls">
+        <p className="compare-hint">Select 2 to 4 Models in the Compare column, then open the side-by-side comparison.</p>
+        {comparedModelIds.length >= 2 ? (
+          <Link className="compare-link" to={`${COMPARE_PATH}?${encodeLeaderboardUrlState(urlState)}`}>
+            Compare selected ({comparedModelIds.length})
+          </Link>
+        ) : (
+          <button type="button" className="compare-link" disabled>
+            Compare selected ({comparedModelIds.length})
+          </button>
+        )}
+      </div>
+
       <div className="table-scroll">
         <table>
           <thead>
             <tr>
+              <th scope="col" className="compare-column">
+                Compare
+              </th>
               {MODEL_COLUMNS.map((column) => (
                 <SortableTh
                   key={column.id}
@@ -492,7 +529,7 @@ export function LeaderboardPage() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={MODEL_COLUMNS.length + visibleBenchmarks.length} className="missing">
+                <td colSpan={1 + MODEL_COLUMNS.length + visibleBenchmarks.length} className="missing">
                   No Models match the current search and filters.
                 </td>
               </tr>
@@ -501,6 +538,20 @@ export function LeaderboardPage() {
                 const { average, coverage, selected } = aggregateFor(model.id);
                 return (
                   <tr key={model.id}>
+                    {/* The per-row Compare checkbox (ticket 10): keyboard
+                        operable, and disabled once 4 Models are selected
+                        (unchecking always works). */}
+                    <td className="compare-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={`Compare ${model.name}`}
+                        checked={comparedModelIds.includes(model.id)}
+                        disabled={
+                          !comparedModelIds.includes(model.id) && comparedModelIds.length >= 4
+                        }
+                        onChange={() => handleCompareToggle(model.id)}
+                      />
+                    </td>
                     <th scope="row">
                       <Link to={modelPath(model.id)}>{model.name}</Link>
                     </th>
@@ -601,7 +652,8 @@ export function LeaderboardPage() {
         Coverage&rdquo; badge. The best Score per Benchmark is highlighted. Missing Scores are
         shown as &ldquo;n/a&rdquo;, never as zero, and each Score links to its published source.
         Each Benchmark&rsquo;s name links to its detail page, and so does each Model&rsquo;s
-        name.
+        name. Select 2 to 4 Models with the Compare checkboxes to open the side-by-side
+        comparison.
         {aggregateLabel === "Weighted Average" ? (
           <>
             {" "}

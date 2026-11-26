@@ -281,6 +281,77 @@ export function selectedBenchmarks(
   return benchmarks.filter((benchmark) => selected.has(benchmark.id));
 }
 
+// --- Compare view: radar axes ------------------------------------------------
+
+/**
+ * The maximum number of axes the compare view's radar chart plots (spec:
+ * "radar of selected Benchmarks capped at 8 axes"). Exported so the web app
+ * and the tests agree on one canonical cap.
+ */
+export const RADAR_AXIS_CAP = 8;
+
+/** The radar chart's Benchmark axes, derived from a Benchmark selection. */
+export interface RadarBenchmarks {
+  /**
+   * The Benchmark ids plotted as radar axes: ranked by the number of
+   * compared Models with a Primary score on the Benchmark (descending),
+   * ties in catalogue order, capped.
+   */
+  benchmarkIds: string[];
+  /**
+   * The selected Benchmark ids the cap left off the radar, in catalogue
+   * order — the Benchmarks the compare view names in its cap note.
+   */
+  deprioritizedBenchmarkIds: string[];
+}
+
+/**
+ * Chooses the compare view's radar axes from a Benchmark selection
+ * (catalogue order, as `selectedBenchmarks` returns it): Benchmarks with
+ * Primary scores across more of the compared Models come first — they make
+ * the most comparable shapes — ties keep catalogue order, and at most `cap`
+ * axes are kept. Benchmarks left off the radar by the cap are reported
+ * separately (in catalogue order) so the view can name them.
+ *
+ * Only Primary scores of the compared Models count: alternate Evaluation
+ * settings and other Models' Scores never move a Benchmark up, and a
+ * duplicated compared Model id counts once. The ranking is deterministic.
+ */
+export function selectRadarBenchmarks(
+  benchmarks: readonly Benchmark[],
+  comparedModelIds: readonly string[],
+  scores: readonly Score[],
+  cap = RADAR_AXIS_CAP,
+): RadarBenchmarks {
+  const compared = new Set(comparedModelIds);
+  const coverageByBenchmark = new Map<string, number>();
+  for (const score of scores) {
+    if (!score.isPrimary || !compared.has(score.modelId)) continue;
+    coverageByBenchmark.set(
+      score.benchmarkId,
+      (coverageByBenchmark.get(score.benchmarkId) ?? 0) + 1,
+    );
+  }
+
+  const ranked = benchmarks
+    .map((benchmark, index) => ({
+      id: benchmark.id,
+      index,
+      coverage: coverageByBenchmark.get(benchmark.id) ?? 0,
+    }))
+    .sort((left, right) => right.coverage - left.coverage || left.index - right.index)
+    .map((entry) => entry.id);
+
+  const limit = Math.max(0, cap);
+  const kept = new Set(ranked.slice(0, limit));
+  return {
+    benchmarkIds: ranked.slice(0, limit),
+    deprioritizedBenchmarkIds: benchmarks
+      .filter((benchmark) => !kept.has(benchmark.id))
+      .map((benchmark) => benchmark.id),
+  };
+}
+
 /** Direction of a leaderboard column sort. */
 export type SortDirection = "asc" | "desc";
 

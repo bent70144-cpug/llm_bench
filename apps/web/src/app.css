@@ -623,3 +623,99 @@ a {
   stroke: light-dark(#e2e8f0, #1e293b);
   stroke-width: 1;
 }
+
+/* Compare view (ticket 10) — the leaderboard's compare affordance, the
+   compare page's furniture, and the radar chart's pieces. Series colours
+   are the chart-series-N custom properties above, shared with the bars. */
+.compare-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.compare-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+/* The "Compare selected (n)" control: a button-styled real link once 2 to 4
+   Models are selected (a shared comparison is a shareable link), and a
+   visibly disabled button before that. */
+.compare-link {
+  display: inline-block;
+  padding: 0.3rem 0.875rem;
+  border: 1px solid light-dark(#1d4ed8, #93c5fd);
+  border-radius: 0.375rem;
+  background: light-dark(#1d4ed8, #93c5fd);
+  color: light-dark(#ffffff, #0b1120);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button.compare-link:disabled {
+  border-color: light-dark(#94a3b8, #475569);
+  background: light-dark(#e2e8f0, #1e293b);
+  color: light-dark(#64748b, #94a3b8);
+  cursor: not-allowed;
+}
+
+/* The per-row Compare checkbox column. */
+.compare-column {
+  white-space: normal;
+}
+
+td.compare-cell {
+  accent-color: light-dark(#1d4ed8, #93c5fd);
+}
+
+/* The compare page's unknown-id notes (dropped from the comparison). */
+.compare-note {
+  margin: 0 0 0.75rem;
+  max-width: 46rem;
+  font-size: 0.875rem;
+  color: light-dark(#64748b, #94a3b8);
+}
+
+/* The radar chart: same layout rules as the bar chart's SVG. */
+.radar-chart {
+  margin: 0.5rem 0 0;
+}
+
+.radar-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 42rem;
+  height: auto;
+  color: inherit;
+}
+
+/* The web: a spoke per axis plus concentric rings. */
+.radar-grid line,
+.radar-grid polygon {
+  fill: none;
+  stroke: light-dark(#e2e8f0, #1e293b);
+  stroke-width: 1;
+}
+
+/* One polygon per Model: solid segments between adjacent known vertices. */
+.radar-segment {
+  stroke: var(--chart-color);
+  stroke-width: 2;
+}
+
+/* A dashed segment spans the axes a Model has no value on — the gap is
+   marked, never filled with a zero at the centre. */
+.radar-segment.radar-gap {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.75;
+}
+
+.radar-vertex {
+  fill: var(--chart-color);
+}
