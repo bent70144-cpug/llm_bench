@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { LICENSE_VALUES, type Benchmark, type Model, type Score } from "@llm-bench/schema";
+import { LICENSE_VALUES, type Benchmark, type Model, type PricingConfig, type Score } from "@llm-bench/schema";
 import {
   bestValueByBenchmark,
+  blendedPricePer1M,
   computeAverage,
   defaultSelectedBenchmarkIds,
   encodeLeaderboardUrlState,
@@ -12,7 +13,10 @@ import {
   isUnderHalfCoverage,
   modelDataCurrency,
   primaryScoreFor,
+  RADAR_AXIS_CAP,
   rankModelsByAverage,
+  selectRadarBenchmarks,
+  selectedBenchmarks,
   sortModelsByColumn,
 } from "@llm-bench/scoring";
 import { startSpaStaticServer } from "./lib/spa-static-server";
@@ -46,6 +50,14 @@ import { startSpaStaticServer } from "./lib/spa-static-server";
  * Average, the view is written to the URL as query parameters, and opening
  * or refreshing a shared URL restores the exact selection, weights, sorting,
  * search, and filters.
+ *
+ * Ticket 10 covers the compare view: selecting 2 to 4 Models with the
+ * leaderboard's Compare checkboxes opens the side-by-side comparison, the
+ * radar chart caps at 8 axes with a note naming the deprioritized
+ * Benchmarks, the bar chart shows every selected Benchmark, missing values
+ * read "n/a" on both charts and in the table, a shared comparison URL
+ * survives refresh, the guard rails (<2, >4, unknown ids) render friendly
+ * messages, and the flow is keyboard-operable.
  *
  * Ticket 13 covers accessibility, responsiveness and performance: light and
  * dark themes (WCAG AA contrast on every surface, a keyboard toggle that
@@ -357,7 +369,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
   });
 
   await step("unbuilt routes fall through to the generic not-found page", async () => {
-    for (const route of ["/compare"]) {
+    for (const route of ["/definitely-not-a-route"]) {
       await page.goto(`${base}${route}`, { waitUntil: "load" });
       await page.locator("h1").first().waitFor({ state: "visible" });
       check(`h1 is Page not found on ${route}`, (await page.locator("h1").textContent()) === "Page not found");
@@ -660,6 +672,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
   ): Promise<{ scoreText: string; className: string }> => {
     const selection = defaultSelectedBenchmarkIds(catalogue);
     const cellIndex =
+      1 + // the row's Compare checkbox cell (ticket 10)
       7 + // the fixed Model-field cells after the row header (Provider … Coverage)
       selection.indexOf(benchmarkId);
     const rowCount = await page.locator("tbody tr").count();
@@ -1036,6 +1049,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       ["Score details control", "tbody button.score-details-button"],
       ["best-Score cell link", "tbody td.best a"],
       ["Benchmark weights hint", ".weights-hint"],
+      ["price chart axis title", ".scatter-svg .axis-title"],
+      ["self-hosted Model list item", ".self-hosted-list li"],
     ];
     const uiSamples: readonly [label: string, selector: string][] = [
       ["number-input border", "input[type='number']"],
@@ -1434,7 +1449,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
 
   /** The aggregate column header's button text ("Average ▼" / "Weighted Average ▼"). */
   const aggregateHeaderText = async (): Promise<string> =>
-    (await page.locator("thead th").nth(6).locator("button").textContent()) ?? "";
+    (await page.locator("thead th").nth(7).locator("button").textContent()) ?? "";
 
   /** The current URL's query string (without the leading "?"). */
   const queryString = (): string => new URL(page.url()).search.replace(/^\?/, "");
@@ -1878,6 +1893,340 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     );
   });
 
+  // --- Ticket 11: the price/performance scatter -------------------------
+
+  // The pricing config the chart reads (the blended-price ratio is data).
+  const pricingConfig = readJson<PricingConfig>("pricing-config.json");
+
+  /** Every scatter point's aria-label, in plot (data-package) order. */
+  const pointLabels = async (): Promise<string[]> => {
+    const count = await page.locator(".scatter-point").count();
+    const labels: string[] = [];
+    for (let index = 0; index < count; index++) {
+      labels.push((await page.locator(".scatter-point").nth(index).getAttribute("aria-label")) ?? "");
+    }
+    return labels;
+  };
+
+  /** The text contents of every element a selector matches. */
+  const textsOf = async (selector: string): Promise<string[]> => {
+    const count = await page.locator(selector).count();
+    const texts: string[] = [];
+    for (let index = 0; index < count; index++) {
+      texts.push((await page.locator(selector).nth(index).textContent()) ?? "");
+    }
+    return texts;
+  };
+
+  await step("the Price vs performance section renders from real data", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    check(
+      "the section heading renders below the table",
+      (await page.locator("section.price-performance h2").textContent()) ===
+        "Price vs performance",
+    );
+
+    // The plotted set, computed from the data through the scoring package:
+    // the priced Models with an aggregate over the default core selection.
+    const plottedIds = models
+      .filter(
+        (model) =>
+          blendedPricePer1M(model, pricingConfig) !== null &&
+          computeAverage(model.id, scores, { benchmarkIds: selection }).average !== null,
+      )
+      .map((model) => model.id);
+    check(
+      "18 of the 26 real Models are plotted (the priced, aggregated ones)",
+      plottedIds.length === 18,
+      `${plottedIds.length} plotted`,
+    );
+
+    const labels = await pointLabels();
+    check(
+      "one focusable point per plotted Model, in data order",
+      labels.length === plottedIds.length &&
+        labels.every((label, index) =>
+          label.startsWith(
+            `${models.find((model) => model.id === plottedIds[index])!.name}:`,
+          ),
+        ),
+      `${labels.length} points; first: ${labels[0] ?? "none"}`,
+    );
+
+    // The null-priced Models are listed separately — the exact heading, with
+    // their aggregates and Coverage — and never plotted.
+    check(
+      "the separate list carries the exact heading",
+      (await page.locator(".self-hosted-list h3").textContent()) ===
+        "Self-hosted / no public API rate",
+    );
+    const selfHostedText = (await page.locator(".self-hosted-list").textContent()) ?? "";
+    const nullPriced = models.filter((model) => model.inputPricePer1M === null);
+    check(
+      "every null-priced Model is listed with its Average and Coverage",
+      nullPriced.every((model) => {
+        const result = computeAverage(model.id, scores, { benchmarkIds: selection });
+        const expected =
+          `${model.name} — Average ` +
+          `${Number((result.average ?? 0).toFixed(1)).toString()} ` +
+          `(${result.coverage}/${result.selected})`;
+        return selfHostedText.includes(expected);
+      }),
+      selfHostedText.slice(0, 120),
+    );
+    check(
+      "no null-priced Model is plotted",
+      labels.every(
+        (label) =>
+          !nullPriced.some((model) => label.startsWith(`${model.name}:`)),
+      ),
+    );
+
+    // The default basis is blended, with the methodology read from the
+    // pricing-config data.
+    check(
+      "the default price basis is blended",
+      (await page.locator("fieldset.price-basis input:checked").getAttribute("value")) ===
+        "blended",
+    );
+    const basisText = (await page.locator("fieldset.price-basis").textContent()) ?? "";
+    check(
+      "the blended option shows the formula from the pricing-config data",
+      basisText.includes("(3 × Input price + 1 × Output price) / 4"),
+      basisText.slice(0, 100),
+    );
+  });
+
+  await step("the price-basis selector switches the price axis between input, output, and blended", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // GPT-6.2 Astra (8 in / 40 out / 16 blended at 3:1) has a distinct price
+    // on every basis, so its point label tracks the selector.
+    const astraLabel = async (): Promise<string> =>
+      (await pointLabels()).find((label) => label.startsWith("GPT-6.2 Astra:")) ?? "";
+    const axisTitles = async (): Promise<string[]> => textsOf(".scatter-svg .axis-title");
+    const tickTexts = async (): Promise<string[]> => textsOf(".scatter-svg .axis-tick");
+
+    // Blended (default): axis max 20 (nice step over the max 16).
+    check(
+      "blended: the x axis reads Blended price / 1M ($) and the point shows $16.00",
+      (await axisTitles()).includes("Blended price / 1M ($)") &&
+        (await astraLabel()).includes("Blended price / 1M $16.00"),
+      await astraLabel(),
+    );
+    check(
+      "blended: the price axis tops out at the nice maximum 20",
+      (await tickTexts()).includes("20") &&
+        !(await tickTexts()).includes("8") &&
+        !(await tickTexts()).includes("40"),
+      (await tickTexts()).join(","),
+    );
+
+    await page.locator('fieldset.price-basis input[value="input"]').click();
+    check(
+      "the input basis is checked after the click",
+      (await page.locator("fieldset.price-basis input:checked").getAttribute("value")) ===
+        "input",
+    );
+    check(
+      "input: the x axis reads Input price / 1M ($) and the point shows $8.00",
+      (await axisTitles()).includes("Input price / 1M ($)") &&
+        (await astraLabel()).includes("Input price / 1M $8.00"),
+      await astraLabel(),
+    );
+    check(
+      "input: the price axis tops out at 8 (the max input price)",
+      (await tickTexts()).includes("8") && !(await tickTexts()).includes("40"),
+      (await tickTexts()).join(","),
+    );
+
+    await page.locator('fieldset.price-basis input[value="output"]').click();
+    check(
+      "output: the x axis reads Output price / 1M ($) and the point shows $40.00",
+      (await axisTitles()).includes("Output price / 1M ($)") &&
+        (await astraLabel()).includes("Output price / 1M $40.00"),
+      await astraLabel(),
+    );
+    check(
+      "output: the price axis tops out at 40 (the max output price)",
+      (await tickTexts()).includes("40"),
+      (await tickTexts()).join(","),
+    );
+
+    // Back to blended: the switch is instant and reversible.
+    await page.locator('fieldset.price-basis input[value="blended"]').click();
+    check(
+      "back on blended: the point shows $16.00 again",
+      (await astraLabel()).includes("Blended price / 1M $16.00"),
+      await astraLabel(),
+    );
+  });
+
+  await step("keyboard focus reaches the scatter points and shows the aggregate and Coverage", async () => {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+
+    // The first point in plot order is Kimi K3.1 Pro (Moonshot AI): blended
+    // (3·2 + 10)/4 = 4, Average 94.2 over its single core Benchmark, so
+    // Coverage (1/12) — hand-computed from models.json + scores.json.
+    const firstPoint = page.locator(".scatter-point").first();
+    await firstPoint.focus();
+    check(
+      "a scatter point can take keyboard focus",
+      (await page.locator(".scatter-point:focus").count()) === 1,
+    );
+
+    const firstLabel = (await firstPoint.getAttribute("aria-label")) ?? "";
+    check(
+      "the focused point's label reads Model, aggregate, Coverage, price, and practical facts",
+      firstLabel ===
+        "Kimi K3.1 Pro: Average 94.2, Coverage (1/12), Blended price / 1M $4.00, Provider Moonshot AI",
+      firstLabel,
+    );
+
+    // The focus indicator paints: an outline on the point group plus a ring
+    // on its circle, in the active theme.
+    const focusPaint = await page.evaluate<{
+      outlineStyle: string;
+      outlineWidth: string;
+      strokeWidth: string;
+    } | null>(
+      "(() => { const g = document.querySelector('.scatter-point:focus');" +
+        " if (g === null) return null; const s = getComputedStyle(g);" +
+        " const c = getComputedStyle(g.querySelector('circle'));" +
+        " return { outlineStyle: s.outlineStyle, outlineWidth: s.outlineWidth, strokeWidth: c.strokeWidth }; })()",
+    );
+    check(
+      "the focused point paints a visible focus indicator (outline + ring)",
+      focusPaint !== null &&
+        focusPaint.outlineStyle !== "none" &&
+        parseFloat(focusPaint.outlineWidth) >= 2 &&
+        parseFloat(focusPaint.strokeWidth) >= 2,
+      JSON.stringify(focusPaint),
+    );
+
+    // The tooltip appears on focus and carries the same reading — the
+    // Coverage included.
+    const tooltip = (await page.locator(".point-tooltip").textContent()) ?? "";
+    check(
+      "focus shows the point's tooltip: name, Average, Coverage, price",
+      tooltip.includes("Kimi K3.1 Pro") &&
+        tooltip.includes("94.2") &&
+        tooltip.includes("(1/12)") &&
+        tooltip.includes("$4.00"),
+      tooltip,
+    );
+
+    // Tab walks to the next point and the tooltip follows it.
+    await page.keyboard.press("Tab");
+    check(
+      "Tab moves focus to the next point (Claude Opus 4.5)",
+      (await page.locator(".scatter-point:focus").count()) === 1 &&
+        ((await page.locator(".scatter-point:focus").getAttribute("aria-label")) ?? "").startsWith(
+          "Claude Opus 4.5:",
+        ),
+      (await page.locator(".scatter-point:focus").getAttribute("aria-label")) ?? "nothing",
+    );
+    const nextTooltip = (await page.locator(".point-tooltip").textContent()) ?? "";
+    check(
+      "the tooltip follows to the next point",
+      nextTooltip.includes("Claude Opus 4.5") && nextTooltip.includes("(4/12)"),
+      nextTooltip,
+    );
+
+    // Hover shows the same tooltip as focus (mouse parity).
+    await page.locator(".scatter-point").nth(2).hover();
+    const hoverTooltip = (await page.locator(".point-tooltip").textContent()) ?? "";
+    check(
+      "hover shows the same tooltip content",
+      hoverTooltip.includes("Claude Sonnet 4.5"),
+      hoverTooltip,
+    );
+  });
+
+  await step("the scatter follows the active view — weights switch the aggregate, the selection switches Coverage", async () => {
+    // A weight makes every point read the Weighted Average — the same active
+    // aggregate as the table. Hand-computed (ticket 06): with SWE-bench
+    // Verified ×2, Claude Opus 4.6 reads 86.8 with Coverage (4/12).
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const swebench = catalogue.find((benchmark) => benchmark.id === "swebench-verified");
+    if (swebench === undefined) {
+      check("data has SWE-bench Verified", false);
+      return;
+    }
+    const weightInput = page
+      .locator(`fieldset.weights-selection label.weight-option:has-text("${swebench.name}")`)
+      .locator("input");
+    await weightInput.click();
+    await weightInput.fill("2");
+
+    check(
+      "the aggregate axis switches to Weighted Average",
+      (await textsOf(".scatter-svg .axis-title")).includes("Weighted Average"),
+    );
+    const opusLabel =
+      (await pointLabels()).find((label) => label.startsWith("Claude Opus 4.6:")) ?? "";
+    check(
+      "the points re-read the Weighted Average (Opus 4.6: 86.8, Coverage (4/12))",
+      opusLabel.includes("Weighted Average 86.8, Coverage (4/12)"),
+      opusLabel,
+    );
+    check(
+      "the self-hosted list switches to the Weighted Average too",
+      ((await page.locator(".self-hosted-list").textContent()) ?? "").includes(
+        "DeepSeek-V4-Pro — Weighted Average",
+      ),
+    );
+
+    // Narrowing the selection re-reads Coverage against it, and priced
+    // Models that lose their aggregate leave the plot — named in a note,
+    // never silently dropped. Unchecking GPQA Diamond (11 selected) drops
+    // the six gpqa-only priced Models from the 18-point plot.
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.locator("h1").first().waitFor({ state: "visible" });
+    const gpqaIndex = catalogue.findIndex((benchmark) => benchmark.id === "gpqa-diamond");
+    await page
+      .locator("fieldset.benchmarks-selection label")
+      .nth(gpqaIndex)
+      .locator("input")
+      .click();
+
+    const narrowed = selection.filter((id) => id !== "gpqa-diamond");
+    const stillPlotted = models.filter(
+      (model) =>
+        blendedPricePer1M(model, pricingConfig) !== null &&
+        computeAverage(model.id, scores, { benchmarkIds: narrowed }).average !== null,
+    );
+    const labels = await pointLabels();
+    check(
+      "the plot narrows to the Models with an aggregate over the narrower selection",
+      labels.length === stillPlotted.length,
+      `${labels.length} points vs ${stillPlotted.length} expected`,
+    );
+    const note = (await page.locator(".price-performance .chart-note").textContent()) ?? "";
+    check(
+      "priced Models without an aggregate are named in a note, not silently dropped",
+      note.includes("Not plotted") && note.includes("Kimi K3.1 Pro") && note.includes("GPT-6.2 Sol"),
+      note.slice(0, 120),
+    );
+    const opusNarrowed =
+      (await pointLabels()).find((label) => label.startsWith("Claude Opus 4.6:")) ?? "";
+    check(
+      "Coverage reads against the narrowed selection ((3/11) for Opus 4.6)",
+      opusNarrowed.includes("Coverage (3/11)"),
+      opusNarrowed,
+    );
+    check(
+      "the self-hosted list still shows all 8 null-priced Models, Coverage against 11",
+      (await page.locator(".self-hosted-list li").count()) === 8 &&
+        ((await page.locator(".self-hosted-list").textContent()) ?? "").includes("(3/11)"),
+    );
+  });
+
   // --- Ticket 09: Model detail pages -----------------------------------
 
   // A real null-priced Model with both scored and unscored Benchmarks, so
@@ -2229,6 +2578,396 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     );
     check("focus moves to the page content", (await page.locator("main:focus").count()) === 1);
   });
+
+  // --- Ticket 10: the compare view ---------------------------------------
+
+  /** The trimmed text of every element a locator matches, in order. */
+  const allTexts = async (locator: LocatorLike): Promise<string[]> => {
+    const count = await locator.count();
+    const texts: string[] = [];
+    for (let index = 0; index < count; index++) {
+      texts.push(((await locator.nth(index).textContent()) ?? "").trim());
+    }
+    return texts;
+  };
+
+  /** The trimmed text of one table row's cells (th and td), left to right. */
+  const rowCellTexts = async (row: LocatorLike): Promise<string[]> =>
+    allTexts(row.locator("th, td"));
+
+  /** Waits until the page's single h1 reads exactly `text`. */
+  const waitForH1 = (text: string): Promise<void> =>
+    page.waitForFunction(
+      "(() => { const h1 = document.querySelector('h1');" +
+        ` return h1 !== null && h1.textContent === ${JSON.stringify(text)}; })()`,
+    );
+
+  // The compared pair, data-driven: the first two Models in data order that
+  // each have at least two Primary scores on the default selection and share
+  // a scored Benchmark — a real comparison of finalists, with real values
+  // and real gaps on both charts.
+  const scoredSelectionIds = (modelId: string): string[] =>
+    selectedBenchmarks(catalogue, selection)
+      .filter((benchmark) => primaryScoreFor(modelId, benchmark.id, scores) !== undefined)
+      .map((benchmark) => benchmark.id);
+  const comparedPair = (() => {
+    const eligible = models.filter((model) => scoredSelectionIds(model.id).length >= 2);
+    for (let left = 0; left < eligible.length; left++) {
+      for (let right = left + 1; right < eligible.length; right++) {
+        const leftIds = scoredSelectionIds(eligible[left]!.id);
+        if (scoredSelectionIds(eligible[right]!.id).some((id) => leftIds.includes(id))) {
+          return [eligible[left]!, eligible[right]!] as const;
+        }
+      }
+    }
+    return null;
+  })();
+
+  if (comparedPair === null) {
+    check("data has two Models sharing a scored Benchmark for the compare view", false);
+  } else {
+    const comparedModels = [...comparedPair];
+    const comparedIds = comparedModels.map((model) => model.id);
+    const selectionBenchmarks = selectedBenchmarks(catalogue, selection);
+    const radar = selectRadarBenchmarks(selectionBenchmarks, comparedIds, scores);
+    const radarNames = radar.benchmarkIds.map(
+      (id) => selectionBenchmarks.find((benchmark) => benchmark.id === id)!.name,
+    );
+
+    /** One Model's Compare checkbox on the leaderboard. */
+    const compareCheckbox = (model: Model): LocatorLike =>
+      page.locator(`tbody input[type="checkbox"][aria-label="Compare ${model.name}"]`);
+
+    /** How many Compare checkboxes are checked on the leaderboard. */
+    const checkedCompareCount = (): Promise<number> =>
+      page.locator('tbody input[type="checkbox"]:checked').count();
+
+    await step("the Compare checkboxes open the side-by-side comparison of 2 to 4 Models", async () => {
+      await page.goto(`${base}/`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      check(
+        "the Compare selected control starts disabled at 0 Models",
+        ((await page.locator("button.compare-link[disabled]").textContent()) ?? "").trim() ===
+          "Compare selected (0)",
+      );
+
+      await compareCheckbox(comparedModels[0]!).click();
+      await compareCheckbox(comparedModels[1]!).click();
+      check(
+        "the leaderboard URL gains the compare parameter with both Model ids",
+        queryString().includes(`compare=${comparedIds.join(",")}`),
+        queryString(),
+      );
+      check(
+        "the enabling control is a link reading Compare selected (2)",
+        ((await page.locator("a.compare-link").textContent()) ?? "").trim() ===
+          "Compare selected (2)",
+      );
+      const href = (await page.locator("a.compare-link").getAttribute("href")) ?? "";
+      check(
+        "the link carries the whole shared URL state (selection + compared Models)",
+        href.startsWith("/compare?") &&
+          href.includes("benchmarks=") &&
+          href.includes(`compare=${comparedIds.join(",")}`),
+        href,
+      );
+
+      await page.locator("a.compare-link").click();
+      await waitForH1("Compare Models");
+      check("the click opens the compare route", pathname() === "/compare", page.url());
+      check(
+        "the document title names the compare view",
+        (await page.title()) === "Compare Models — LLM Bench",
+      );
+      check("focus moves to the page content", (await page.locator("main:focus").count()) === 1);
+      check(
+        "the intro counts the compared Models and the selected Benchmarks",
+        (await bodyText()).includes(
+          `2 Models side by side across the ${selectionBenchmarks.length} selected Benchmarks`,
+        ),
+      );
+
+      // The side-by-side table: one column per compared Model (linked to its
+      // page) above the fixed facts, then one row per selected Benchmark.
+      const headerTexts = await allTexts(page.locator("table thead th"));
+      check(
+        "the compared Models head the table, each linked to its page",
+        JSON.stringify(headerTexts) ===
+          JSON.stringify(["Model", comparedModels[0]!.name, comparedModels[1]!.name]) &&
+          (await page.locator(`table thead a[href="/models/${comparedIds[0]}"]`).count()) === 1 &&
+          (await page.locator(`table thead a[href="/models/${comparedIds[1]}"]`).count()) === 1,
+        headerTexts.join(" | "),
+      );
+
+      const rowCount = await page.locator("table tbody tr").count();
+      check(
+        "the table renders the fixed Model facts plus one row per selected Benchmark",
+        rowCount === 6 + selectionBenchmarks.length,
+        `${rowCount} rows`,
+      );
+
+      // The aggregate row: the active aggregate (a plain Average here — the
+      // URL carries no weights) with its Coverage, as the leaderboard shows it.
+      const aggregateRow = await rowCellTexts(page.locator("table tbody tr").nth(5));
+      const expectedAggregate = comparedIds.map((modelId) => {
+        const result = computeAverage(modelId, scores, { benchmarkIds: selection });
+        return `${Number(result.average!.toFixed(1))} (${result.coverage}/${result.selected})`;
+      });
+      check(
+        "the aggregate row shows each Model's Average with its Coverage",
+        aggregateRow[0] === "Average" &&
+          aggregateRow[1] === expectedAggregate[0] &&
+          aggregateRow[2] === expectedAggregate[1],
+        aggregateRow.join(" | "),
+      );
+
+      // One row per selected Benchmark in catalogue order: each compared
+      // Model's Primary score, "n/a" for a gap — never zero.
+      const benchmarkRows: string[][] = [];
+      for (let index = 6; index < rowCount; index++) {
+        benchmarkRows.push(await rowCellTexts(page.locator("table tbody tr").nth(index)));
+      }
+      const expectedRows = selectionBenchmarks.map((benchmark) => [
+        benchmark.name,
+        ...comparedIds.map((modelId) => {
+          const score = primaryScoreFor(modelId, benchmark.id, scores);
+          return score === undefined ? "n/a" : String(score.value);
+        }),
+      ]);
+      check(
+        "every selected Benchmark has its row — each Model's Primary score or n/a, never zero",
+        JSON.stringify(benchmarkRows) === JSON.stringify(expectedRows),
+        benchmarkRows.slice(0, 2).map((row) => row.join(" | ")).join("  //  "),
+      );
+    });
+
+    await step("the radar chart caps at 8 axes and names the deprioritized Benchmarks", async () => {
+      // Still on /compare, with the default selection of 12 Benchmarks —
+      // more than the radar's cap.
+      const axisNames = await allTexts(page.locator(".radar-chart-svg text.chart-label"));
+      check(
+        `the radar plots at most ${RADAR_AXIS_CAP} axes (here ${radar.benchmarkIds.length} of the ${selectionBenchmarks.length} selected)`,
+        axisNames.length === radar.benchmarkIds.length &&
+          radar.benchmarkIds.length <= RADAR_AXIS_CAP &&
+          selectionBenchmarks.length > RADAR_AXIS_CAP,
+        axisNames.join(" | "),
+      );
+      check(
+        "the axes are the Benchmarks with the most Primary scores across the compared Models",
+        JSON.stringify(axisNames) === JSON.stringify(radarNames),
+        axisNames.join(" | "),
+      );
+
+      const body = await bodyText();
+      check(
+        "the cap note states the cap and names every deprioritized Benchmark",
+        body.includes(`capped at ${RADAR_AXIS_CAP} axes`) &&
+          body.includes("Not on the radar:") &&
+          radar.deprioritizedBenchmarkIds
+            .map((id) => selectionBenchmarks.find((benchmark) => benchmark.id === id)!.name)
+            .every((name) => body.includes(name)),
+      );
+
+      // A Model missing a Benchmark reads "n/a" on its axis — a dashed gap,
+      // never a plotted zero at the centre.
+      const expectedMissing = radar.benchmarkIds.reduce(
+        (total, benchmarkId) =>
+          total +
+          comparedIds.filter(
+            (modelId) => primaryScoreFor(modelId, benchmarkId, scores) === undefined,
+          ).length,
+        0,
+      );
+      const missingLabels = await page.locator(".radar-chart-svg .chart-value.missing").count();
+      check(
+        "every gap on the radar reads n/a — never a plotted zero",
+        missingLabels === expectedMissing && expectedMissing > 0,
+        `${missingLabels} n/a labels vs ${expectedMissing} expected`,
+      );
+    });
+
+    await step("the bar chart shows every selected Benchmark, n/a for gaps", async () => {
+      const rowGroups = page.locator('.bar-chart-svg g[role="img"]');
+      check(
+        "the bar chart renders one row per selected Benchmark — not the radar's capped set",
+        (await rowGroups.count()) === selectionBenchmarks.length &&
+          selectionBenchmarks.length > RADAR_AXIS_CAP,
+        `${await rowGroups.count()} rows`,
+      );
+
+      // Each row is itself a labelled group reading every Model's value —
+      // the chart's values are perceivable without sight.
+      const readings: string[] = [];
+      for (let index = 0; index < selectionBenchmarks.length; index++) {
+        readings.push((await rowGroups.nth(index).getAttribute("aria-label")) ?? "");
+      }
+      const expectedReadings = selectionBenchmarks.map(
+        (benchmark) =>
+          `${benchmark.name}: ${comparedModels
+            .map((model) => {
+              const score = primaryScoreFor(model.id, benchmark.id, scores);
+              return `${model.name} ${score === undefined ? "n/a" : score.value}`;
+            })
+            .join("; ")}`,
+      );
+      check(
+        "every bar row reads each Model's Primary score or n/a",
+        JSON.stringify(readings) === JSON.stringify(expectedReadings),
+        readings[0] ?? "",
+      );
+
+      const expectedMissing = selectionBenchmarks.reduce(
+        (total, benchmark) =>
+          total +
+          comparedIds.filter((modelId) => primaryScoreFor(modelId, benchmark.id, scores) === undefined)
+            .length,
+        0,
+      );
+      const missingLabels = await page.locator(".bar-chart-svg .chart-value.missing").count();
+      check(
+        "every gap on the bar chart reads n/a — never a zero-length bar",
+        missingLabels === expectedMissing && expectedMissing > 0,
+        `${missingLabels} n/a labels vs ${expectedMissing} expected`,
+      );
+    });
+
+    await step("a shared comparison URL survives refresh", async () => {
+      // The URL the Compare selected link produced is still current.
+      const shared = page.url();
+      check(
+        "the compared Models are encoded in the URL's compare parameter",
+        new URL(shared).searchParams.get("compare") === comparedIds.join(","),
+        shared,
+      );
+
+      await page.reload({ waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check(
+        "the compare view still renders after the refresh",
+        (await page.locator("h1").textContent()) === "Compare Models",
+      );
+      check("the URL is unchanged by the refresh", page.url() === shared, page.url());
+      check(
+        "the compared Models still head the table",
+        JSON.stringify(await allTexts(page.locator("table thead th"))) ===
+          JSON.stringify(["Model", comparedModels[0]!.name, comparedModels[1]!.name]),
+      );
+      check(
+        "the radar still caps at its axes after the refresh",
+        (await page.locator(".radar-chart-svg text.chart-label").count()) ===
+          radar.benchmarkIds.length,
+      );
+
+      // The browser's back button returns to the leaderboard with the whole
+      // view intact — including the Compare checkboxes.
+      await page.goBack();
+      await waitForH1("LLM Bench");
+      check(
+        "back returns to the leaderboard with the compared Models still checked",
+        (await checkedCompareCount()) === 2 &&
+          ((await page.locator("a.compare-link").textContent()) ?? "").trim() ===
+            "Compare selected (2)",
+      );
+    });
+
+    await step("guard rails: fewer than 2, more than 4, and unknown ids get friendly messages", async () => {
+      // No compare parameter: the page explains the flow, not an empty table.
+      await page.goto(`${base}/compare`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check(
+        "with no compared Models the page explains the 2-to-4 rule",
+        (await bodyText()).includes("A comparison shows 2 to 4 Models side by side"),
+      );
+
+      // Five compared ids: over the cap.
+      const five = models.slice(0, 5).map((model) => model.id);
+      await page.goto(`${base}/compare?compare=${five.join(",")}`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      check(
+        "with 5 compared Models the page asks to uncheck some",
+        (await bodyText()).includes("This link compares 5 Models"),
+      );
+
+      // A stale shared link: an unknown id among two known ones is dropped
+      // with a note, and the known Models still compare.
+      await page.goto(`${base}/compare?compare=${[...comparedIds, "definitely-not-a-model"].join(",")}`, {
+        waitUntil: "load",
+      });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+      const stale = await bodyText();
+      check(
+        "an unknown compared id is dropped with a note; the known Models still compare",
+        stale.includes("No Model with id definitely-not-a-model exists in the data package") &&
+          stale.includes("it was left out of this comparison") &&
+          stale.includes(comparedModels[0]!.name) &&
+          stale.includes(comparedModels[1]!.name),
+      );
+    });
+
+    await step("the compare flow is keyboard-operable, and the leaderboard caps it at 4 Models", async () => {
+      await page.goto(`${base}/`, { waitUntil: "load" });
+      await page.locator("h1").first().waitFor({ state: "visible" });
+
+      // Space on a row's Compare checkbox toggles it — no mouse needed.
+      await compareCheckbox(comparedModels[0]!).focus();
+      await page.keyboard.press("Space");
+      check("Space checks the first Compare checkbox", (await checkedCompareCount()) === 1);
+      await compareCheckbox(comparedModels[1]!).focus();
+      await page.keyboard.press("Space");
+      check(
+        "a second Space adds the second Model to the URL",
+        (await checkedCompareCount()) === 2 &&
+          queryString().includes(`compare=${comparedIds.join(",")}`),
+        queryString(),
+      );
+
+      // The 4-Model cap: once four Models are selected, the other rows'
+      // checkboxes disable (unchecking always works).
+      const extra = models
+        .filter((model) => model.id !== comparedIds[0] && model.id !== comparedIds[1])
+        .slice(0, 2);
+      for (const model of extra) {
+        await compareCheckbox(model).focus();
+        await page.keyboard.press("Space");
+      }
+      check(
+        "the link counts 4 compared Models",
+        ((await page.locator("a.compare-link").textContent()) ?? "").trim() ===
+          "Compare selected (4)",
+      );
+      check(
+        "at 4 compared Models the remaining checkboxes disable",
+        (await page.locator('tbody input[type="checkbox"]:disabled').count()) ===
+          models.length - 4,
+      );
+
+      await compareCheckbox(extra[0]!).focus();
+      await page.keyboard.press("Space");
+      check(
+        "unchecking always works and re-enables the other rows",
+        (await checkedCompareCount()) === 3 &&
+          (await page.locator('tbody input[type="checkbox"]:disabled').count()) === 0,
+      );
+      await compareCheckbox(extra[1]!).focus();
+      await page.keyboard.press("Space");
+
+      // Enter on the Compare selected link completes the keyboard path.
+      await page.locator("a.compare-link").focus();
+      await page.keyboard.press("Enter");
+      await waitForH1("Compare Models");
+      check(
+        "Enter on Compare selected opens the compare route",
+        pathname() === "/compare",
+        page.url(),
+      );
+      check(
+        "the two keyboard-selected Models head the side-by-side table",
+        JSON.stringify(await allTexts(page.locator("table thead th"))) ===
+          JSON.stringify(["Model", comparedModels[0]!.name, comparedModels[1]!.name]),
+      );
+    });
+  }
 }
 
 // --- Script entry ------------------------------------------------------------

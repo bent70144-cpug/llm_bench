@@ -3,6 +3,7 @@ import {
   type Benchmark,
   type License,
   type Model,
+  type PricingConfig,
   type Score,
   type SourceType,
 } from "@llm-bench/schema";
@@ -244,6 +245,29 @@ export function modelDataCurrency(model: Model, scores: readonly Score[]): strin
 }
 
 /**
+ * The Blended price of one Model per 1M tokens:
+ * (inputWeight × inputPricePer1M + outputWeight × outputPricePer1M) /
+ * (inputWeight + outputWeight), with the ratio taken from the pricing
+ * config data (packages/data/pricing-config.json, a 3:1 input-to-output
+ * ratio) — the methodology is data, never code, and the divisor is the
+ * weight sum, never stored. Null when either price is null (the price
+ * invariant guarantees both-or-neither): a Model without a public API
+ * rate has no Blended price, never zero.
+ */
+export function blendedPricePer1M(
+  model: Model,
+  pricingConfig: PricingConfig,
+): number | null {
+  if (model.inputPricePer1M === null || model.outputPricePer1M === null) return null;
+  const weightSum = pricingConfig.inputWeight + pricingConfig.outputWeight;
+  return (
+    (pricingConfig.inputWeight * model.inputPricePer1M +
+      pricingConfig.outputWeight * model.outputPricePer1M) /
+    weightSum
+  );
+}
+
+/**
  * Maps each Benchmark id to the best Primary score value across all Models,
  * for highlighting the best Score per Benchmark. Non-primary Scores are
  * ignored; Benchmarks without a Primary score have no entry.
@@ -280,6 +304,77 @@ export function selectedBenchmarks(
 ): Benchmark[] {
   const selected = new Set(selectedIds);
   return benchmarks.filter((benchmark) => selected.has(benchmark.id));
+}
+
+// --- Compare view: radar axes ------------------------------------------------
+
+/**
+ * The maximum number of axes the compare view's radar chart plots (spec:
+ * "radar of selected Benchmarks capped at 8 axes"). Exported so the web app
+ * and the tests agree on one canonical cap.
+ */
+export const RADAR_AXIS_CAP = 8;
+
+/** The radar chart's Benchmark axes, derived from a Benchmark selection. */
+export interface RadarBenchmarks {
+  /**
+   * The Benchmark ids plotted as radar axes: ranked by the number of
+   * compared Models with a Primary score on the Benchmark (descending),
+   * ties in catalogue order, capped.
+   */
+  benchmarkIds: string[];
+  /**
+   * The selected Benchmark ids the cap left off the radar, in catalogue
+   * order — the Benchmarks the compare view names in its cap note.
+   */
+  deprioritizedBenchmarkIds: string[];
+}
+
+/**
+ * Chooses the compare view's radar axes from a Benchmark selection
+ * (catalogue order, as `selectedBenchmarks` returns it): Benchmarks with
+ * Primary scores across more of the compared Models come first — they make
+ * the most comparable shapes — ties keep catalogue order, and at most `cap`
+ * axes are kept. Benchmarks left off the radar by the cap are reported
+ * separately (in catalogue order) so the view can name them.
+ *
+ * Only Primary scores of the compared Models count: alternate Evaluation
+ * settings and other Models' Scores never move a Benchmark up, and a
+ * duplicated compared Model id counts once. The ranking is deterministic.
+ */
+export function selectRadarBenchmarks(
+  benchmarks: readonly Benchmark[],
+  comparedModelIds: readonly string[],
+  scores: readonly Score[],
+  cap = RADAR_AXIS_CAP,
+): RadarBenchmarks {
+  const compared = new Set(comparedModelIds);
+  const coverageByBenchmark = new Map<string, number>();
+  for (const score of scores) {
+    if (!score.isPrimary || !compared.has(score.modelId)) continue;
+    coverageByBenchmark.set(
+      score.benchmarkId,
+      (coverageByBenchmark.get(score.benchmarkId) ?? 0) + 1,
+    );
+  }
+
+  const ranked = benchmarks
+    .map((benchmark, index) => ({
+      id: benchmark.id,
+      index,
+      coverage: coverageByBenchmark.get(benchmark.id) ?? 0,
+    }))
+    .sort((left, right) => right.coverage - left.coverage || left.index - right.index)
+    .map((entry) => entry.id);
+
+  const limit = Math.max(0, cap);
+  const kept = new Set(ranked.slice(0, limit));
+  return {
+    benchmarkIds: ranked.slice(0, limit),
+    deprioritizedBenchmarkIds: benchmarks
+      .filter((benchmark) => !kept.has(benchmark.id))
+      .map((benchmark) => benchmark.id),
+  };
 }
 
 /** Direction of a leaderboard column sort. */
@@ -470,6 +565,21 @@ export function sortModelsByColumn(
     if (comparison !== 0 || aggregateResults === null) return comparison;
     return compareForRanking(left, right, aggregateResults);
   });
+}
+
+/**
+ * The active aggregate of one Model over the selection — the Weighted
+ * Average when `context.weights` are active on the selection (any selected
+ * Benchmark weighted ≠ 1), the plain Average otherwise. This is the number
+ * the leaderboard's Average column, the ranking, and the price/performance
+ * chart all display, so every view agrees on which aggregate is active.
+ * Only Primary scores feed it.
+ */
+export function activeAggregateResult(
+  modelId: string,
+  context: LeaderboardContext,
+): AverageResult {
+  return aggregateResultFor(modelId, context);
 }
 
 /** The active aggregate of one Model: Weighted Average when the context's weights are active. */

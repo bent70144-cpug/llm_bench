@@ -90,9 +90,9 @@ describe("Model detail pages (ticket 09)", () => {
     expect(resolveRoute("/models/gpt-5-2/")).toEqual({ page: "model", modelId: "gpt-5-2" });
     expect(resolveRoute("/models/gpt-5-2%20")).toEqual({ page: "model", modelId: "gpt-5-2 " });
 
-    // Everything else is the generic not-found page — including the
-    // not-yet-built /compare route (ticket 10) and malformed Model paths.
-    expect(resolveRoute("/compare")).toEqual({ page: "not-found" });
+    // Everything else is the generic not-found page — malformed Model paths.
+    // /compare is the compare view's route since ticket 10.
+    expect(resolveRoute("/compare")).toEqual({ page: "compare" });
     expect(resolveRoute("/models")).toEqual({ page: "not-found" });
     expect(resolveRoute("/models/")).toEqual({ page: "not-found" });
     expect(resolveRoute("/models/gpt-5-2/extra")).toEqual({ page: "not-found" });
