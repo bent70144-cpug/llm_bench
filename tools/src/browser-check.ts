@@ -1397,8 +1397,13 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
           " const s = getComputedStyle(el); return { style: s.outlineStyle, width: s.outlineWidth }; })()",
       );
 
-    // The logical tab order: skip link → theme toggle → search → filters →
-    // Benchmark selection → the table controls.
+    // The logical tab order: skip link → theme toggle → the landing hero's
+    // links (jump to the table, Compare, Price vs performance, the Fresh
+    // Published Results cards) → search → filters → Benchmark selection →
+    // the table controls.
+    const focusedHref = (): Promise<string> =>
+      page.evaluate<string>("document.activeElement?.getAttribute('href') ?? 'none'");
+
     await page.keyboard.press("Tab");
     const stop1 = await focusedElement();
     check("Tab 1 reaches the skip link", stop1.endsWith("a.skip-link"), stop1);
@@ -1408,8 +1413,35 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
     check("Tab 2 reaches the theme toggle", stop2.endsWith("button.theme-toggle"), stop2);
 
     await page.keyboard.press("Tab");
-    const stop3 = await focusedElement();
-    check("Tab 3 reaches the search control", stop3.endsWith("input[search]"), stop3);
+    check(
+      "Tab 3 reaches the hero's jump to the leaderboard table",
+      (await focusedHref()) === "#leaderboard-table",
+      await focusedHref(),
+    );
+    await page.keyboard.press("Tab");
+    check(
+      "Tab 4 reaches the hero's Compare models link",
+      (await focusedHref()) === "/compare",
+      await focusedHref(),
+    );
+    await page.keyboard.press("Tab");
+    check(
+      "Tab 5 reaches the hero's Price vs performance link",
+      (await focusedHref()) === "#price-vs-performance",
+      await focusedHref(),
+    );
+    // Tabs 6–9: the four Fresh Published Results cards, each a Model link.
+    for (let card = 1; card <= 4; card++) {
+      await page.keyboard.press("Tab");
+      check(
+        `Tab ${5 + card} reaches a Fresh Published Results card (a Model link)`,
+        (await focusedHref()).startsWith("/models/"),
+        await focusedHref(),
+      );
+    }
+    await page.keyboard.press("Tab");
+    const stop10 = await focusedElement();
+    check("Tab 10 reaches the search control", stop10.endsWith("input[search]"), stop10);
     const outline = await focusedOutline();
     check(
       "the focused search control paints a visible focus outline",
@@ -1960,8 +1992,8 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       )
       .map((model) => model.id);
     check(
-      "18 of the 26 real Models are plotted (the priced, aggregated ones)",
-      plottedIds.length === 18,
+      "21 of the 29 real Models are plotted (the priced, aggregated ones)",
+      plottedIds.length === 21,
       `${plottedIds.length} plotted`,
     );
 

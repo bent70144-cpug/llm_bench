@@ -112,6 +112,43 @@ function formatTick(tick: number): string {
   return Number(tick.toFixed(2)).toString();
 }
 
+/** A stable CSS class suffix for a Provider name ("Mistral AI" → "mistral-ai",
+ *  "Z.ai" → "z-ai"); the colour itself lives in CSS so it follows the theme. */
+function providerSlug(provider: string): string {
+  return provider
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * The Pareto frontier of the plotted points (Artificial Analysis-style):
+ * the Models no other Model beats on both axes — you cannot get a higher
+ * aggregate without paying more. Returned sorted by price ascending, so
+ * the polyline reads as the efficiency staircase from the cheap, modest
+ * Models up to the expensive, capable ones.
+ */
+function paretoFrontier(points: readonly ScatterPoint[]): ScatterPoint[] {
+  const frontier = points.filter((point) =>
+    points.every((other) => {
+      if (other === point) return true;
+      const dominates =
+        other.price <= point.price &&
+        (other.aggregate.average ?? 0) >= (point.aggregate.average ?? 0) &&
+        (other.price < point.price || (other.aggregate.average ?? 0) > (point.aggregate.average ?? 0));
+      return !dominates;
+    }),
+  );
+  return frontier.sort((a, b) => a.price - b.price);
+}
+
+/** The share of the price axis the "most attractive quadrant" spans — its
+ *  right edge sits at this fraction of the axis maximum. */
+const ATTRACTIVE_PRICE_FRACTION = 0.35;
+/** The aggregate level (as a share of the axis maximum) above which the
+ *  "most attractive quadrant" starts — the top band of the plot. */
+const ATTRACTIVE_AGGREGATE_FRACTION = 0.55;
+
 // Layout, in SVG user units (the viewBox scales to the container's width).
 const WIDTH = 640;
 const HEIGHT = 400;
@@ -193,6 +230,39 @@ export function PricePerformanceChart({
   const y = (aggregate: number): number =>
     MARGIN.top + (1 - aggregate / yScale.axisMax) * PLOT_HEIGHT;
 
+  // The Artificial Analysis-style efficiency staircase: the frontier Models
+  // no cheaper Model outscores, drawn as a dotted line over the points.
+  const frontier = useMemo(() => paretoFrontier(points), [points]);
+  const frontierPath = useMemo(() => {
+    // Local mirrors of x()/y() so the memo depends only on the scales.
+    const fx = (price: number): number =>
+      MARGIN.left + (price / xScale.axisMax) * PLOT_WIDTH;
+    const fy = (aggregate: number): number =>
+      MARGIN.top + (1 - aggregate / yScale.axisMax) * PLOT_HEIGHT;
+    return frontier
+      .map(
+        (point, index) =>
+          `${index === 0 ? "M" : "L"} ${fx(point.price)} ${fy(point.aggregate.average ?? 0)}`,
+      )
+      .join(" ");
+  }, [frontier, xScale, yScale]);
+
+  // The provider legend: every Provider with a plotted point, alphabetical,
+  // coloured by the same class as its points.
+  const plottedProviders = useMemo(
+    () => [...new Set(points.map((point) => point.model.provider))].sort(),
+    [points],
+  );
+
+  // The "most attractive quadrant" (high aggregate, low price): a mint
+  // band across the top-left of the plot, like Artificial Analysis' charts.
+  const attractiveQuadrant = {
+    x1: x(0),
+    x2: x(xScale.axisMax * ATTRACTIVE_PRICE_FRACTION),
+    y1: y(yScale.axisMax),
+    y2: y(yScale.axisMax * ATTRACTIVE_AGGREGATE_FRACTION),
+  };
+
   /** The accessible reading of one point — identical on hover, focus, and
    *  for screen readers: Model, aggregate, Coverage, price, practical facts. */
   const pointLabel = (point: ScatterPoint): string => {
@@ -247,72 +317,105 @@ export function PricePerformanceChart({
           {aggregateLabel} over the current selection.
         </p>
       ) : (
-        <svg
-          className="scatter-svg"
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          role="group"
-          aria-label={`Scatter plot: ${aggregateLabel} against ${activeBasisLabel}, one point per Model`}
-        >
-          {/* Gridlines and tick labels, both axes, from the data ranges. */}
-          {ticksFor(xScale.axisMax, xScale.step).map((tick) => (
-            <g key={`x-${tick}`} className="scatter-grid">
-              <line x1={x(tick)} y1={MARGIN.top} x2={x(tick)} y2={MARGIN.top + PLOT_HEIGHT} />
-              <text
-                x={x(tick)}
-                y={MARGIN.top + PLOT_HEIGHT + 16}
-                textAnchor="middle"
-                className="axis-tick"
-              >
-                {formatTick(tick)}
-              </text>
-            </g>
-          ))}
-          {ticksFor(yScale.axisMax, yScale.step).map((tick) => (
-            <g key={`y-${tick}`} className="scatter-grid">
-              <line x1={MARGIN.left} y1={y(tick)} x2={MARGIN.left + PLOT_WIDTH} y2={y(tick)} />
-              <text x={MARGIN.left - 8} y={y(tick) + 4} textAnchor="end" className="axis-tick">
-                {formatTick(tick)}
-              </text>
-            </g>
-          ))}
-
-          {/* Axis titles: the price basis on X, the active aggregate on Y. */}
-          <text
-            x={MARGIN.left + PLOT_WIDTH / 2}
-            y={HEIGHT - 10}
-            textAnchor="middle"
-            className="axis-title"
+        <>
+          <ul className="chart-legend scatter-legend" aria-label="Providers in the chart">
+            {plottedProviders.map((provider) => (
+              <li key={provider} className={`provider-${providerSlug(provider)}`}>
+                <span className="chart-swatch provider-swatch" aria-hidden="true" />
+                {provider}
+              </li>
+            ))}
+          </ul>
+          <svg
+            className="scatter-svg"
+            viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+            role="group"
+            aria-label={`Scatter plot: ${aggregateLabel} against ${activeBasisLabel}, one point per Model`}
           >
-            {activeBasisLabel}
-          </text>
-          <text
-            x={14}
-            y={MARGIN.top + PLOT_HEIGHT / 2}
-            textAnchor="middle"
-            className="axis-title"
-            transform={`rotate(-90 14 ${MARGIN.top + PLOT_HEIGHT / 2})`}
-          >
-            {aggregateLabel}
-          </text>
-
-          {/* One focusable point per plotted Model. */}
-          {points.map((point) => (
-            <g
-              key={point.model.id}
-              className="scatter-point chart-series-0"
-              transform={`translate(${x(point.price)}, ${y(point.aggregate.average ?? 0)})`}
-              tabIndex={0}
-              role="img"
-              aria-label={pointLabel(point)}
-              onMouseEnter={(event) => showTooltip(point, event.currentTarget)}
-              onMouseLeave={() => setTooltip(null)}
-              onFocus={(event) => showTooltip(point, event.currentTarget)}
-              onBlur={() => setTooltip(null)}
+            {/* The "most attractive quadrant" (Artificial Analysis style):
+                high aggregate at low price, shaded mint ahead of the grid. */}
+            <rect
+              className="scatter-quadrant"
+              x={attractiveQuadrant.x1}
+              y={attractiveQuadrant.y1}
+              width={attractiveQuadrant.x2 - attractiveQuadrant.x1}
+              height={attractiveQuadrant.y2 - attractiveQuadrant.y1}
+            />
+            <text
+              className="scatter-quadrant-label"
+              x={attractiveQuadrant.x1 + 8}
+              y={attractiveQuadrant.y2 - 8}
             >
-              <circle r={5} />
-            </g>
-          ))}
-        </svg>
+              Most attractive quadrant
+            </text>
+
+            {/* Gridlines and tick labels, both axes, from the data ranges. */}
+            {ticksFor(xScale.axisMax, xScale.step).map((tick) => (
+              <g key={`x-${tick}`} className="scatter-grid">
+                <line x1={x(tick)} y1={MARGIN.top} x2={x(tick)} y2={MARGIN.top + PLOT_HEIGHT} />
+                <text
+                  x={x(tick)}
+                  y={MARGIN.top + PLOT_HEIGHT + 16}
+                  textAnchor="middle"
+                  className="axis-tick"
+                >
+                  {formatTick(tick)}
+                </text>
+              </g>
+            ))}
+            {ticksFor(yScale.axisMax, yScale.step).map((tick) => (
+              <g key={`y-${tick}`} className="scatter-grid">
+                <line x1={MARGIN.left} y1={y(tick)} x2={MARGIN.left + PLOT_WIDTH} y2={y(tick)} />
+                <text x={MARGIN.left - 8} y={y(tick) + 4} textAnchor="end" className="axis-tick">
+                  {formatTick(tick)}
+                </text>
+              </g>
+            ))}
+
+            {/* Axis titles: the price basis on X, the active aggregate on Y. */}
+            <text
+              x={MARGIN.left + PLOT_WIDTH / 2}
+              y={HEIGHT - 10}
+              textAnchor="middle"
+              className="axis-title"
+            >
+              {activeBasisLabel}
+            </text>
+            <text
+              x={14}
+              y={MARGIN.top + PLOT_HEIGHT / 2}
+              textAnchor="middle"
+              className="axis-title"
+              transform={`rotate(-90 14 ${MARGIN.top + PLOT_HEIGHT / 2})`}
+            >
+              {aggregateLabel}
+            </text>
+
+            {/* The Pareto frontier: the dotted efficiency staircase over the
+                points (no cheaper Model scores higher on the other side). */}
+            {frontier.length > 1 ? (
+              <path className="scatter-pareto" d={frontierPath} />
+            ) : null}
+
+            {/* One focusable point per plotted Model, coloured by Provider. */}
+            {points.map((point) => (
+              <g
+                key={point.model.id}
+                className={`scatter-point provider-${providerSlug(point.model.provider)}`}
+                transform={`translate(${x(point.price)}, ${y(point.aggregate.average ?? 0)})`}
+                tabIndex={0}
+                role="img"
+                aria-label={pointLabel(point)}
+                onMouseEnter={(event) => showTooltip(point, event.currentTarget)}
+                onMouseLeave={() => setTooltip(null)}
+                onFocus={(event) => showTooltip(point, event.currentTarget)}
+                onBlur={() => setTooltip(null)}
+              >
+                <circle r={6.5} />
+              </g>
+            ))}
+          </svg>
+        </>
       )}
 
       {withoutAggregate.length > 0 ? (

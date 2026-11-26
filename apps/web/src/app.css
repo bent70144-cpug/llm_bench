@@ -119,18 +119,12 @@ section > p {
 .landing-hero {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
-  gap: 1.5rem;
+  gap: 1.75rem;
   margin: 0 0 2rem;
-  padding: 1.5rem;
-  border: 1px solid light-dark(#cbd5e1, #1e293b);
+  padding: 1.75rem;
+  border: 1px solid light-dark(#e2e8f0, #1e293b);
   border-radius: 0.75rem;
-  background:
-    radial-gradient(
-      120% 140% at 0% 0%,
-      light-dark(#eff6ff, #17255433) 0%,
-      transparent 55%
-    ),
-    light-dark(#ffffff, #0f172a);
+  background: light-dark(#ffffff, #0f172a);
 }
 
 .hero-copy {
@@ -143,8 +137,9 @@ section > p {
 .hero-tagline {
   margin: 0;
   max-width: 34rem;
-  font-size: 1.25rem;
-  line-height: 1.4;
+  font-family: Georgia, "Times New Roman", "Songti SC", serif;
+  font-size: 1.375rem;
+  line-height: 1.35;
   color: light-dark(#0f172a, #f1f5f9);
 }
 
@@ -155,7 +150,7 @@ section > p {
 .hero-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem 1.5rem;
+  gap: 1rem 1.75rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -164,7 +159,31 @@ section > p {
 .hero-stats li {
   display: flex;
   flex-direction: column;
+  gap: 0.125rem;
   min-width: 4.5rem;
+}
+
+.stat-swatch {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 0.1875rem;
+  margin-bottom: 0.25rem;
+}
+
+.swatch-blue {
+  background: light-dark(#1d4ed8, #93c5fd);
+}
+
+.swatch-green {
+  background: light-dark(#1e8e3e, #4ade80);
+}
+
+.swatch-purple {
+  background: light-dark(#7c5cff, #a78bfa);
+}
+
+.swatch-orange {
+  background: light-dark(#f58220, #fb923c);
 }
 
 .stat-value {
@@ -847,9 +866,10 @@ a {
 }
 
 /* Price vs performance (ticket 11): a pure-SVG scatter below the table.
-   The point colour reuses the series-0 custom property; every point is a
-   focusable group, so it needs a visible focus indicator in both themes
-   (an explicit :focus ring, plus the global :focus-visible outline). */
+   The Artificial Analysis-style pieces — provider-coloured points, the mint
+   "most attractive quadrant", the dotted Pareto frontier — layer on top of
+   the original accessible structure; every point stays a focusable group
+   with a visible focus indicator in both themes. */
 .price-performance {
   margin-top: 2.5rem;
 }
@@ -888,8 +908,92 @@ a {
   color: inherit;
 }
 
+/* The scatter's neutral fallback colour — sourced BEFORE the provider
+   palette so a named provider (same specificity, later in the file) wins.
+   Points no longer carry chart-series-0; that class stays with the bars. */
+.scatter-point {
+  --chart-color: light-dark(#64748b, #94a3b8);
+}
+
+/* The provider palette (Artificial Analysis-style vendor colours): each
+   class colours its scatter points AND its legend swatch through the same
+   --chart-color custom property, light- and dark-theme aware. */
+.provider-anthropic {
+  --chart-color: light-dark(#c1704f, #e8956f);
+}
+
+.provider-openai {
+  --chart-color: light-dark(#1a1a1a, #f1f5f9);
+}
+
+.provider-google {
+  --chart-color: light-dark(#1e8e3e, #4ade80);
+}
+
+.provider-alibaba {
+  --chart-color: light-dark(#f58220, #fb923c);
+}
+
+.provider-meta {
+  --chart-color: light-dark(#1976d2, #60a5fa);
+}
+
+.provider-mistral-ai {
+  --chart-color: light-dark(#e5342c, #f87171);
+}
+
+.provider-moonshot-ai {
+  --chart-color: light-dark(#0d9488, #2dd4bf);
+}
+
+.provider-deepseek {
+  --chart-color: light-dark(#6366f1, #a5b4fc);
+}
+
+.provider-minimax {
+  --chart-color: light-dark(#db2777, #f472b6);
+}
+
+.provider-z-ai {
+  --chart-color: light-dark(#7c5cff, #a78bfa);
+}
+
+.provider-sakana-ai {
+  --chart-color: light-dark(#0891b2, #22d3ee);
+}
+
+.scatter-legend {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  color: light-dark(#475569, #cbd5e1);
+}
+
+.provider-swatch {
+  border-radius: 999px;
+}
+
+.scatter-quadrant {
+  fill: light-dark(#e6f4e6, #14352a);
+}
+
+.scatter-quadrant-label {
+  fill: light-dark(#3f6b46, #86efac);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.scatter-pareto {
+  fill: none;
+  stroke: light-dark(#1a1a1a, #f8fafc);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+}
+
 .scatter-point circle {
   fill: var(--chart-color);
+  stroke: light-dark(#ffffff, #0b1120);
+  stroke-width: 1.5;
 }
 
 .scatter-point {
@@ -910,6 +1014,7 @@ a {
 .scatter-grid line {
   stroke: light-dark(#e2e8f0, #1e293b);
   stroke-width: 1;
+  opacity: 0.55;
 }
 
 .axis-tick {

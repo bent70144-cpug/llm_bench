@@ -73,18 +73,22 @@ export function LandingHero() {
         </p>
         <ul className="hero-stats" aria-label="Dataset at a glance">
           <li>
+            <span className="stat-swatch swatch-blue" aria-hidden="true" />
             <span className="stat-value">{models.length}</span>
             <span className="stat-label">Models</span>
           </li>
           <li>
+            <span className="stat-swatch swatch-green" aria-hidden="true" />
             <span className="stat-value">{benchmarks.length}</span>
             <span className="stat-label">Benchmarks</span>
           </li>
           <li>
+            <span className="stat-swatch swatch-purple" aria-hidden="true" />
             <span className="stat-value">{scores.length}</span>
             <span className="stat-label">Published Results</span>
           </li>
           <li>
+            <span className="stat-swatch swatch-orange" aria-hidden="true" />
             <span className="stat-value">{providerCount}</span>
             <span className="stat-label">Providers</span>
           </li>
