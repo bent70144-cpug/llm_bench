@@ -1,5 +1,4 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { parseCommonArgs, usageError } from "./lib/cli";
 import { auditDataDir } from "./lib/audit";
 import { validateDataDir } from "./lib/dataset";
 
@@ -7,7 +6,7 @@ import { validateDataDir } from "./lib/dataset";
  * validate-data — structural gate (and, with --audit, the pre-launch data
  * audit) for the @llm-bench/data package.
  *
- * Usage: tsx src/validate-data.ts [--data-dir <path>] [--audit]
+ * Usage: tsx src/validate-data.ts [--data-dir <path>] [--audit] [-h, --help]
  *
  * Defaults to the workspace's packages/data directory. Exit codes:
  *   0 — data is valid
@@ -22,50 +21,35 @@ import { validateDataDir } from "./lib/dataset";
  * launch gate, not the authoring gate.
  */
 
+const USAGE = "usage: validate-data [--data-dir <path>] [--audit] [-h, --help]";
+
 interface CliArgs {
   dataDir: string;
   audit: boolean;
-}
-
-function usageError(message: string): never {
-  console.error(`error: ${message}`);
-  console.error("usage: validate-data [--data-dir <path>] [--audit]");
-  process.exit(2);
+  help: boolean;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
-  const args: CliArgs = {
-    dataDir: fileURLToPath(new URL("../../packages/data", import.meta.url)),
-    audit: false,
-  };
+  const { dataDir, help, rest } = parseCommonArgs(argv, USAGE);
+  const args: CliArgs = { dataDir, audit: false, help };
 
-  let i = 0;
-  while (i < argv.length) {
-    const arg = argv[i];
-    if (arg === undefined) {
-      break;
-    }
-    if (arg === "--data-dir") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        usageError("--data-dir requires a path");
-      }
-      args.dataDir = path.resolve(value);
-      i += 2;
-      continue;
-    }
+  for (const arg of rest) {
     if (arg === "--audit") {
       args.audit = true;
-      i += 1;
       continue;
     }
-    usageError(`unknown argument: ${arg}`);
+    usageError(`unknown argument: ${arg}`, USAGE);
   }
   return args;
 }
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.help) {
+    console.log(USAGE);
+    return;
+  }
 
   if (args.audit) {
     const { errors, summary } = auditDataDir(args.dataDir);

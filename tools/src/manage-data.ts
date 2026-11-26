@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fail, loadForMutation, saveIfValid, usageError, DEFAULT_DATA_DIR } from "./lib/cli";
+import {
+  fail,
+  loadForMutation,
+  parseCommonArgs,
+  saveIfValid,
+  usageError,
+} from "./lib/cli";
 import type { DatasetKey, MutableDataset } from "./lib/dataset";
 
 /**
@@ -60,33 +65,25 @@ interface ParsedArgs {
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
+  const { dataDir, help, rest } = parseCommonArgs(argv, USAGE);
   const args: ParsedArgs = {
-    dataDir: DEFAULT_DATA_DIR,
+    dataDir,
     command: undefined,
     entity: undefined,
     positionals: [],
     json: undefined,
     cascade: false,
-    help: false,
+    help,
   };
 
   let i = 0;
-  while (i < argv.length) {
-    const arg = argv[i];
+  while (i < rest.length) {
+    const arg = rest[i];
     if (arg === undefined) {
       break;
     }
-    if (arg === "--data-dir") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        usageError("--data-dir requires a path", USAGE);
-      }
-      args.dataDir = path.resolve(value);
-      i += 2;
-      continue;
-    }
     if (arg === "--json") {
-      const value = argv[i + 1];
+      const value = rest[i + 1];
       if (value === undefined) {
         usageError("--json requires a JSON object or @file", USAGE);
       }
@@ -96,11 +93,6 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
     if (arg === "--cascade") {
       args.cascade = true;
-      i += 1;
-      continue;
-    }
-    if (arg === "-h" || arg === "--help") {
-      args.help = true;
       i += 1;
       continue;
     }
