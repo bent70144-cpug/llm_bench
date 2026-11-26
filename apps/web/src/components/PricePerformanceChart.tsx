@@ -214,7 +214,7 @@ export function PricePerformanceChart({
 
   return (
     <section className="price-performance" aria-label="Price vs performance">
-      <h2>Price vs performance</h2>
+      <h2 id="price-vs-performance">Price vs performance</h2>
       <p className="detail-note">
         Each point is one Model: its {aggregateLabel} — from Primary scores only, over{" "}
         {benchmarkIds.length} selected Benchmark{benchmarkIds.length === 1 ? "" : "s"} — against

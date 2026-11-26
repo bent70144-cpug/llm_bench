@@ -51,15 +51,15 @@ describe("the price/performance chart over the real dataset", () => {
 
   it("plots exactly the priced Models with an aggregate; the 8 null-priced Models form the separate list", () => {
     // Over the default 12 core Benchmarks every Model has an aggregate, so
-    // the plotted set is exactly the 18 priced Models.
+    // the plotted set is exactly the 21 priced Models.
     const priced = models.filter((model) => model.inputPricePer1M !== null);
     const plotted = models.filter((model) => {
       const price = blendedPricePer1M(model, pricingConfig);
       const aggregate = activeAggregateResult(model.id, { scores, benchmarkIds: selection });
       return price !== null && aggregate.average !== null;
     });
-    expect(priced).toHaveLength(18);
-    expect(plotted).toHaveLength(18);
+    expect(priced).toHaveLength(21);
+    expect(plotted).toHaveLength(21);
     expect(new Set(plotted.map((model) => model.id))).toEqual(
       new Set(priced.map((model) => model.id)),
     );

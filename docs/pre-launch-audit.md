@@ -142,14 +142,33 @@ explicit, visible rule amendment in a data PR.
 **Last run: 2026-11-26 — PASS.**
 
 ```
-audit clean: 26 Model(s), 17 Benchmark(s), 107 Score(s), 41 Evaluation
+audit clean: 29 Model(s), 17 Benchmark(s), 119 Score(s), 41 Evaluation
 settings — every Score verified, zero placeholder data
 ```
 
-All 26 Models and all 107 Scores (87 Primary scores, 20 alternate Evaluation
+All 29 Models and all 119 Scores (99 Primary scores, 20 alternate Evaluation
 settings) pass; zero unverified Scores; zero placeholder values. The same
 pass runs permanently inside `pnpm test` (§1b), so this "last run" can only
 drift stale in the harmless direction.
+
+#### 2026-11-26 data update (post-audit refresh)
+
+A web-sourced refresh added three Models with provider-published catalogue
+Scores — Qwen3.7 Max and Qwen3.6 Plus (official Qwen launch blogs,
+`qwen.ai/blog?id=qwen3.7` and `?id=qwen3.6`) and Sakana Namazu (official
+performance chart, `sakana.ai/namazu/`) — 12 new Scores total, every one
+`verified` with a provider `sourceUrl`, `retrievedDate` 2026-11-26. The
+audit and validation passes above were re-run after the update. Research
+findings recorded for the record: the newest frontier generation (Claude
+Fable 5.2 / Opus 5.5 / Sonnet 5.5, Gemini 4 family, GPT-6.1, Qwen4-Max,
+GLM-5.2/5.3) no longer publishes the catalogue's classic suite — their
+announcements report SWE-Bench Pro/Multilingual/Multimodal, Terminal-Bench
+4.x, Global-MMLU, ARC-AGI-3, HLE, GDPval and similar, none of which are in
+the catalogue — so no catalogue Scores exist to record for them (the GPT-6.2
+Astra/Sol system-card GPQA Diamond and ARC-AGI-2 results already in the
+data remain that generation's only catalogue publications). Adding those
+newer benchmarks to the catalogue would be a rule amendment, not a data
+update.
 
 ### Deliberately absent data (recorded so "zero placeholder" is not misread)
 
@@ -191,10 +210,10 @@ Retail-domain tie-break applied). Machine verification is not the sign-off.
 What remains is the human review, by the accountable data owner, at or near
 launch time — sources drift:
 
-- [ ] For each of the 26 Models, open the linked source URL of its Primary
+- [ ] For each of the 29 Models, open the linked source URL of its Primary
   scores and confirm the value, Evaluation setting, Source type, and
   publishedDate against the page (the Model pages, the Score details panel,
-  and the full-dataset export list them; 87 Primary scores in total).
+  and the full-dataset export list them; 99 Primary scores in total).
 - [ ] Verify every Model's prices against the official pricing pages —
   first-party rates against the Provider's page, and the two Reference
   inference provider rates (kimi-k2-5, minimax-m2-5 — OpenRouter) against

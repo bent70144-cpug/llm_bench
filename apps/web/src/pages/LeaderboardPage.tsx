@@ -33,6 +33,7 @@ import { formatOneDecimal } from "../chart-utils";
 import { ExportControls } from "../components/ExportControls";
 import { PricePerformanceChart } from "../components/PricePerformanceChart";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
+import { LandingHero } from "../components/LandingHero";
 import { ScoreDetailDialog } from "../components/ScoreDetailDialog";
 
 /**
@@ -347,6 +348,8 @@ export function LeaderboardPage() {
         default; extended-Tier Benchmarks can be added below.
       </p>
 
+      <LandingHero />
+
       <section className="controls" aria-label="Search, filters, and Benchmark selection">
         <label className="search-control">
           Search
@@ -482,7 +485,7 @@ export function LeaderboardPage() {
         )}
       </div>
 
-      <div className="table-scroll">
+      <div className="table-scroll" id="leaderboard-table">
         <table>
           <thead>
             <tr>

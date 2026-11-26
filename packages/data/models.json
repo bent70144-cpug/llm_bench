@@ -388,5 +388,47 @@
     "lastUpdated": "2026-11-26",
     "sourceUrl": "https://openai.com/index/introducing-gpt-6-2-astra-sol/",
     "notes": "Everyday/efficient sibling of GPT-6.2 Astra, announced together 2026-11-17 (pubDate verified via openai.com/news/rss.xml: 'Introducing GPT-6.2 Astra and Sol', Tue, 17 Nov 2026 17:45:00 GMT). API id: gpt-6.2-sol. Id convention follows models-openai.md (gpt-6.2-* → gpt-6-2-*). PRICING (openai.com official API pricing page, https://openai.com/api/pricing/ → business/pricing/#api, verified 2026-11-26): $2.00 input / $0.10 cached input / $10.00 output per 1M tokens; announcement corroborates ('GPT-6.2 Sol carries forward GPT-6.1 Sol’s rates of $2 for input, $0.10 for cached input, and $10 for output per million tokens'); model docs page additionally lists cache writes $2.50/1M (30-min retention; $5.00/1M for 12-hour, short-context Standard) and long-context rates: requests with >272K input tokens pay 2x input/cache and 1.5x output; pricing-page footnote 'Pricing above reflects standard processing rates for context lengths under 272K.' CONTEXT WINDOW (model docs page https://developers.openai.com/api/docs/models/gpt-6.2-sol): 1,050,000 total context = 922,000 max input + 128,000 max output; knowledge cutoff 2026-06-01 (NOTE: later than Astra's 2026-05-18). Retrieval method: the page is Cloudflare-403 from this network and the r.jina.ai reader used for Astra is blocked for this IP today; values were read from two independent WordPress mShots server-side renders of the official URL via a vision model (three reads, all agreeing) and cross-checked where possible (pricing figures match openai.com/api/pricing; cache-write sentence matches the page meta description). Data owner should re-confirm the context-window/knowledge-cutoff digits from an unblocked network before publishing. Reasoning: Highest, Speed: Fast; input text+image, output text; reasoning efforts low/medium/high/xhigh/max ('none' rejected by the API). LICENSE: API use governed by the OpenAI Service Terms (https://openai.com/policies/service-terms, updated 2026-11-13, §1 API) under the OpenAI Terms of Use (https://openai.com/policies/terms-of-use, effective 2026-01-01); the system card states the models are intended to be used in accordance with OpenAI's Usage Policies, Service Terms, and Terms of Use. SYSTEM CARD (evals source): https://deploymentsafety.openai.com/gpt-6-2-astra-sol (HTML, 'Published November 17, 2026', changelog Nov 17 + Nov 22 2026). ChatGPT-product context figures (e.g. 'GPT Reasoning total context window 256K' on the Business pricing comparison) are ChatGPT app numbers, NOT the API model context window — deliberately not used."
+  },
+  {
+    "id": "qwen3-7-max",
+    "name": "Qwen3.7 Max",
+    "provider": "Alibaba",
+    "license": "proprietary",
+    "releaseDate": "2026-05-19",
+    "contextWindow": 1000000,
+    "inputPricePer1M": 1.25,
+    "outputPricePer1M": 3.75,
+    "referenceInferenceProvider": null,
+    "lastUpdated": "2026-11-26",
+    "sourceUrl": "https://qwen.ai/blog?id=qwen3.7",
+    "notes": "Alibaba Cloud Qwen Team's proprietary flagship for agent-driven work; API-only, no open weights. First-party rates $1.25 in / $3.75 out per 1M (cached input $0.25). Benchmark values from the official Qwen3.7 launch blog (aggregated by llm-stats, retrieved 2026-11-26); MMLU-Pro 89.6 as listed on the llm-stats MMLU-Pro leaderboard (0.896). LiveCodeBench row is release_v6. The blog's newer-generation suites (SuperGPQA, MMLU-ProX, MMMLU) are not in the catalogue and are not recorded."
+  },
+  {
+    "id": "qwen3-6-plus",
+    "name": "Qwen3.6 Plus",
+    "provider": "Alibaba",
+    "license": "proprietary",
+    "releaseDate": "2026-03-31",
+    "contextWindow": 1000000,
+    "inputPricePer1M": 0.5,
+    "outputPricePer1M": 3,
+    "referenceInferenceProvider": null,
+    "lastUpdated": "2026-11-26",
+    "sourceUrl": "https://qwen.ai/blog?id=qwen3.6",
+    "notes": "Alibaba's next-generation flagship with multimodal input; API-only. First-party rates $0.50 in / $3.00 out per 1M (cached input $0.05). Benchmark values from the official Qwen3.6 launch blog (aggregated by llm-stats, retrieved 2026-11-26); MMLU-Pro 88.5 as listed on the llm-stats MMLU-Pro leaderboard (0.885). LiveCodeBench row is release_v6; the blog's AIME row is AIME26, not the catalogue's aime-2025, so it is not recorded."
+  },
+  {
+    "id": "sakana-namazu",
+    "name": "Sakana Namazu",
+    "provider": "Sakana AI",
+    "license": "proprietary",
+    "releaseDate": "2026-08-03",
+    "contextWindow": 262144,
+    "inputPricePer1M": 0.95,
+    "outputPricePer1M": 4,
+    "referenceInferenceProvider": null,
+    "lastUpdated": "2026-11-26",
+    "sourceUrl": "https://sakana.ai/namazu/",
+    "notes": "Sakana AI's proprietary closed-API model with multimodal input, 256K context; $0.95 in / $4.00 out per 1M (cached input $0.15). Benchmark values from the official Sakana Namazu performance chart (vs Kimi K2.6 base), aggregated by llm-stats (retrieved 2026-11-26); MMLU-Pro 90.3 as listed on the llm-stats MMLU-Pro leaderboard (0.903), the highest published MMLU-Pro result in the catalogue. The chart's AIME row is AIME26 (97), not the catalogue's aime-2025, so it is not recorded."
   }
 ]

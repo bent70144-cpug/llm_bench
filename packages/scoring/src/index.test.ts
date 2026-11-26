@@ -1401,7 +1401,7 @@ describe("modelDataCurrency", () => {
       for (const model of publishedModels) {
         expect(modelDataCurrency(model, publishedScores)).toBe("2026-11-26");
       }
-      expect(publishedModels).toHaveLength(26);
+      expect(publishedModels).toHaveLength(29);
     });
   });
 });

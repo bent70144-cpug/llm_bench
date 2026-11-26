@@ -68,7 +68,7 @@ function jsonEscaped(value: string): string {
 describe("Model detail pages (ticket 09)", () => {
   it("resolves every Model id from the data package to a route entry", () => {
     const models = readModels();
-    expect(models).toHaveLength(26);
+    expect(models).toHaveLength(29);
 
     // Every Model in the data package resolves to its own route entry —
     // adding a Model creates its page automatically.

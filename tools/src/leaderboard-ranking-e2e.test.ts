@@ -48,9 +48,9 @@ describe("ranking and Coverage over the real dataset", () => {
   const selection = defaultSelectedBenchmarkIds(benchmarks);
   const context = { scores, benchmarkIds: selection };
 
-  it("ranks all 26 Models by Average descending over the default 12 core Benchmarks", () => {
+  it("ranks all 29 Models by Average descending over the default 12 core Benchmarks", () => {
     // Hand-computed from models.json + scores.json: every Model's Primary
-    // scores over the 12 core-Tier Benchmarks, averaged. All 26 Models have
+    // scores over the 12 core-Tier Benchmarks, averaged. All 29 Models have
     // at least one core Primary, so none has a null Average here.
     expect(rankModelsByAverage(models, context).map((model) => model.id)).toEqual([
       "gpt-6-2-astra", // 97 over 1
@@ -60,9 +60,12 @@ describe("ranking and Coverage over the real dataset", () => {
       "qwen3-8-2-4t-a95b", // 92.6 over 1
       "glm-5-2", // 91.2 over 1
       "deepseek-v4-1-flash", // 90.9 over 1
+      "sakana-namazu", // 90.15 over 2
       "claude-opus-4-6", // 89.648 over 4
+      "qwen3-7-max", // 89.52 over 5
       "claude-sonnet-4-6", // 89.2 over 4
       "deepseek-v4-pro", // 87.925 over 4
+      "qwen3-6-plus", // 87.7 over 5
       "kimi-k2-5", // 86.52 over 5
       "glm-4-7", // 85.3 over 6 — exactly 50% Coverage
       "claude-opus-4-5", // 84.855 over 4
@@ -83,14 +86,14 @@ describe("ranking and Coverage over the real dataset", () => {
   });
 
   it("badges exactly the Models under 50% Coverage — the three at exactly (6/12) are not badged", () => {
-    // Hand-counted from scores.json: 23 of 26 Models are under 50% Coverage
+    // Hand-counted from scores.json: 26 of 29 Models are under 50% Coverage
     // on the default selection; GLM-4.7, Qwen3.5-27B, and MiniMax-M2 sit
     // exactly at (6/12) and must NOT carry the badge. (Compared as a set —
     // the badge has no order of its own.)
     const badged = models.filter((model) =>
       isUnderHalfCoverage(computeAverage(model.id, scores, { benchmarkIds: selection })),
     );
-    expect(badged).toHaveLength(23);
+    expect(badged).toHaveLength(26);
     expect([...new Set(badged.map((model) => model.id))].sort()).toEqual(
       [
         "gpt-6-2-astra",
@@ -100,9 +103,12 @@ describe("ranking and Coverage over the real dataset", () => {
         "qwen3-8-2-4t-a95b",
         "glm-5-2",
         "deepseek-v4-1-flash",
+        "sakana-namazu",
         "claude-opus-4-6",
+        "qwen3-7-max",
         "claude-sonnet-4-6",
         "deepseek-v4-pro",
+        "qwen3-6-plus",
         "kimi-k2-5",
         "claude-opus-4-5",
         "minimax-m2-5",
@@ -134,8 +140,8 @@ describe("ranking and Coverage over the real dataset", () => {
   });
 
   it("sorts null-Average Models last, by name, when the selection leaves them unscored", () => {
-    // Selection narrowed to GPQA Diamond: 20 Models have a Primary score
-    // there; the 6 without drop to null Average and must sort below every
+    // Selection narrowed to GPQA Diamond: 22 Models have a Primary score
+    // there; the 7 without drop to null Average and must sort below every
     // scored Model, alphabetically by Model name.
     const ranked = rankModelsByAverage(models, {
       scores,
@@ -143,17 +149,18 @@ describe("ranking and Coverage over the real dataset", () => {
     });
     const ids = ranked.map((model) => model.id);
 
-    expect(ids.slice(-6)).toEqual([
+    expect(ids.slice(-7)).toEqual([
       "claude-haiku-4-5", // "Claude Haiku 4.5"
       "deepseek-v4-pro-base", // "DeepSeek-V4-Pro-Base"
       "gemini-2-5-pro", // "Gemini 2.5 Pro"
       "kimi-k2-thinking", // "Kimi K2 Thinking"
       "llama-4-maverick-base", // "Llama 4 Maverick (base)"
       "mistral-medium-3-5", // "Mistral Medium 3.5"
+      "sakana-namazu", // "Sakana Namazu"
     ]);
     // Every scored Model ranks above every null-Average Model.
-    const nullAverageIds = new Set(ids.slice(-6));
-    expect(ids.findIndex((id) => nullAverageIds.has(id))).toBe(ids.length - 6);
+    const nullAverageIds = new Set(ids.slice(-7));
+    expect(ids.findIndex((id) => nullAverageIds.has(id))).toBe(ids.length - 7);
   });
 
   it("ships the ranking UI wording in the built bundle", () => {
