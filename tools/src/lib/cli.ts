@@ -1,3 +1,4 @@
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   readMutableDataset,
@@ -8,13 +9,62 @@ import {
 } from "./dataset";
 
 /**
- * Process-level helpers shared by the mutating tools commands
- * (manage-data, import-scores): usage errors, failure exits, and the
- * validate-before-write mutation gate.
+ * Process-level helpers shared by the tools commands (validate-data,
+ * manage-data, import-scores): the shared argument loop, usage errors,
+ * failure exits, and the validate-before-write mutation gate.
  */
 
 /** The real data package, when --data-dir is not given. */
 export const DEFAULT_DATA_DIR = fileURLToPath(new URL("../../../packages/data", import.meta.url));
+
+/** The options every tools command shares, parsed out of its argv. */
+export interface CommonArgs {
+  /** The data directory: the --data-dir value resolved, or the default. */
+  dataDir: string;
+  /** Whether -h / --help was given. */
+  help: boolean;
+  /** The remaining arguments, with the common options removed. */
+  rest: readonly string[];
+}
+
+/**
+ * Parses the options every tools command shares — `--data-dir <path>` and
+ * `-h` / `--help` — and returns them beside the remaining arguments, so
+ * each command's own loop handles only its specific options and
+ * positionals. A missing --data-dir value is a usage error (exit 2)
+ * against the given usage text; what the help flag then does stays each
+ * command's own decision (all print their usage and exit 0).
+ */
+export function parseCommonArgs(argv: readonly string[], usage: string): CommonArgs {
+  const rest: string[] = [];
+  let dataDir = DEFAULT_DATA_DIR;
+  let help = false;
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === undefined) {
+      break;
+    }
+    if (arg === "--data-dir") {
+      const value = argv[i + 1];
+      if (value === undefined) {
+        usageError("--data-dir requires a path", usage);
+      }
+      dataDir = path.resolve(value);
+      i += 2;
+      continue;
+    }
+    if (arg === "-h" || arg === "--help") {
+      help = true;
+      i += 1;
+      continue;
+    }
+    rest.push(arg);
+    i += 1;
+  }
+  return { dataDir, help, rest };
+}
 
 export function usageError(message: string, usage: string): never {
   console.error(`error: ${message}`);

@@ -8,9 +8,9 @@ import {
 } from "@llm-bench/schema";
 import { benchmarks, models, scores } from "@llm-bench/data";
 import {
+  activeAggregateResult,
   bestValueByBenchmark,
-  computeAverage,
-  computeWeightedAverage,
+  datasetDataCurrency,
   decodeLeaderboardUrlState,
   encodeLeaderboardUrlState,
   filterModels,
@@ -20,7 +20,6 @@ import {
   selectedBenchmarks,
   sortModelsByColumn,
   weightsAreActive,
-  type AverageResult,
   type BenchmarkWeights,
   type LeaderboardSort,
   type LeaderboardUrlState,
@@ -30,6 +29,7 @@ import {
 } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath, COMPARE_PATH, modelPath } from "../routes";
+import { formatOneDecimal } from "../chart-utils";
 import { ExportControls } from "../components/ExportControls";
 import { PricePerformanceChart } from "../components/PricePerformanceChart";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
@@ -81,10 +81,6 @@ const MODEL_COLUMNS: readonly ModelColumn[] = [
   { id: "average", label: "Average", align: "right" },
   { id: "coverage", label: "Coverage", align: "right" },
 ];
-
-function formatAverage(value: number): string {
-  return Number(value.toFixed(1)).toString();
-}
 
 function toggleIn<T>(values: readonly T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
@@ -268,16 +264,6 @@ export function LeaderboardPage() {
     () => sortModelsByColumn(filteredModels, sort, leaderboardContext),
     [filteredModels, sort, leaderboardContext],
   );
-
-  // The active aggregate of one Model: the Weighted Average when weights
-  // are active on the selection, the plain Average otherwise.
-  const aggregateFor = (modelId: string): AverageResult =>
-    weightsAreActive(weights, selectedBenchmarkIds)
-      ? computeWeightedAverage(modelId, scores, {
-          benchmarkIds: selectedBenchmarkIds,
-          weights,
-        })
-      : computeAverage(modelId, scores, { benchmarkIds: selectedBenchmarkIds });
 
   // The whole view is URL state: every change is written back with
   // replaceState (no history spam), so the URL is always a shareable link
@@ -537,7 +523,10 @@ export function LeaderboardPage() {
               </tr>
             ) : (
               rows.map((model) => {
-                const { average, coverage, selected } = aggregateFor(model.id);
+                const { average, coverage, selected } = activeAggregateResult(
+                  model.id,
+                  leaderboardContext,
+                );
                 return (
                   <tr key={model.id}>
                     {/* The per-row Compare checkbox (ticket 10): keyboard
@@ -583,7 +572,7 @@ export function LeaderboardPage() {
                       {average === null ? (
                         <span className="missing">n/a</span>
                       ) : (
-                        formatAverage(average)
+                        formatOneDecimal(average)
                       )}{" "}
                       <span className="coverage-count">
                         {formatCoverage({ average, coverage, selected })}
@@ -679,6 +668,24 @@ export function LeaderboardPage() {
       {/* Exports (ticket 12): the current view (CSV/JSON) and the full raw
           dataset (JSON), generated from the rows and view state above. */}
       <ExportControls rows={rows} viewState={urlState} />
+
+      {/* Data currency and change tracking (stories 77–78): when the data
+          was last updated — computed at read time from the data package by
+          the scoring package, like every Average — and where data changes
+          are recorded: the repository's version history under packages/data,
+          so no separate changelog is maintained. */}
+      <footer className="site-footer">
+        <p className="data-currency">
+          Data last updated {datasetDataCurrency(models, scores)}
+        </p>
+        <p className="table-note">
+          Data changes are tracked in the repository&rsquo;s version history under{" "}
+          <a href="https://github.com/bent70144-cpug/llm_bench/commits/main/packages/data">
+            packages/data
+          </a>
+          ; no separate changelog is maintained.
+        </p>
+      </footer>
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for
           the hovered/focused score cell, and the Score details panel. */}

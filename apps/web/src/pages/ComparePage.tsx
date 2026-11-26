@@ -2,8 +2,7 @@ import { useState } from "react";
 import { benchmarks, models, scores } from "@llm-bench/data";
 import type { Model } from "@llm-bench/schema";
 import {
-  computeAverage,
-  computeWeightedAverage,
+  activeAggregateResult,
   decodeLeaderboardUrlState,
   formatCoverage,
   primaryScoreFor,
@@ -11,11 +10,11 @@ import {
   selectRadarBenchmarks,
   selectedBenchmarks,
   weightsAreActive,
-  type AverageResult,
 } from "@llm-bench/scoring";
 import { BackLink } from "../BackLink";
 import { Link } from "../router";
 import { benchmarkPath, modelPath } from "../routes";
+import { formatOneDecimal } from "../chart-utils";
 import { GroupedBarChart, RadarChart } from "../components/GroupedBarChart";
 
 /**
@@ -40,10 +39,6 @@ const NO_PUBLIC_RATE = "self-hosted / no public API rate";
 const MIN_COMPARED = 2;
 const MAX_COMPARED = 4;
 
-function formatAverage(value: number): string {
-  return Number(value.toFixed(1)).toString();
-}
-
 export function ComparePage() {
   // The view is read-only URL state, decoded once per mount: while the
   // visitor is here the URL does not change, and every navigation remounts
@@ -64,17 +59,17 @@ export function ComparePage() {
 
   // The Benchmark selection and weights come from the shared URL state, so
   // the comparison shows exactly what the visitor selected on the
-  // leaderboard — and the aggregate is the active one.
+  // leaderboard — and the aggregate is the active one, computed by the
+  // scoring package's shared active-aggregate API (the same one the
+  // leaderboard's Average column and ranking use).
   const selection = selectedBenchmarks(benchmarks, urlState.benchmarkIds);
+  const leaderboardContext = {
+    scores,
+    benchmarkIds: urlState.benchmarkIds,
+    weights: urlState.weights,
+  };
   const weightsActive = weightsAreActive(urlState.weights, urlState.benchmarkIds);
   const aggregateLabel = weightsActive ? "Weighted Average" : "Average";
-  const aggregateFor = (modelId: string): AverageResult =>
-    weightsActive
-      ? computeWeightedAverage(modelId, scores, {
-          benchmarkIds: urlState.benchmarkIds,
-          weights: urlState.weights,
-        })
-      : computeAverage(modelId, scores, { benchmarkIds: urlState.benchmarkIds });
 
   // The radar's axes: the deterministic selection from the scoring package
   // (most Primary scores across the compared Models first, capped).
@@ -197,13 +192,13 @@ export function ComparePage() {
                   <tr>
                     <th scope="row">{aggregateLabel}</th>
                     {comparedModels.map((model) => {
-                      const result = aggregateFor(model.id);
+                      const result = activeAggregateResult(model.id, leaderboardContext);
                       return (
                         <td key={model.id}>
                           {result.average === null ? (
                             <span className="missing">n/a</span>
                           ) : (
-                            formatAverage(result.average)
+                            formatOneDecimal(result.average)
                           )}{" "}
                           <span className="coverage-count">{formatCoverage(result)}</span>
                         </td>

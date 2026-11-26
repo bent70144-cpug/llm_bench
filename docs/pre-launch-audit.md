@@ -41,6 +41,19 @@ record and cross-record:
 - every Primary score eligible under its Benchmark's Canonical sources: its
   Source type must be listed, and where the entry defines `urlPatterns`, its
   source URL must match at least one pattern;
+- every resolved pair consistent with the Source resolution rule (spec:
+  "the highest-ranked eligible source wins and ties break by newest
+  publishedDate"): for every (Model, Benchmark) pair with more than one
+  eligible Score, no eligible Score may outrank the designated Primary, and
+  no same-ranked eligible Score may be newer. When the top candidates tie
+  on both rank and publishedDate the rule is inconclusive, so those pairs
+  are validation-exempt — the recorded resolution decides. The real dataset
+  holds eight such ties: claude-opus-4-6 and claude-sonnet-4-6 on τ²-bench
+  (resolved by the documented Retail-domain tie-break; see §3's
+  Primary-score resolution item) and six same-card same-date pairs the rule
+  cannot tell apart (deepseek-v4-pro's with/without-thinking rows on four
+  Benchmarks; the gpt-6-2-astra and gpt-6-2-sol reasoning-effort rows on
+  ARC-AGI-2);
 - the Model price invariant (input and output prices both present or both
   null), the Reference inference provider rule (non-null only when a third
   party supplies the rate), `higherIsBetter: true` for all v1 Benchmarks,
@@ -155,7 +168,7 @@ drift stale in the harmless direction.
   `models-meta-mistral-kimi.md`, `models-openai.md`, `models-openai-sol.md`,
   `models-xai.md` in the workspace `notes/llm-bench/` directory — working
   documents, not part of this repository) ends with an UNVERIFIED list:
-  numbers, prices, and license terms that could not be confirmed against a
+  numbers, prices, and License names that could not be confirmed against a
   live source on 2026-11-26. None of them was transcribed into
   `packages/data`. The data package contains only Published Results whose
   value, Evaluation setting, and provenance were confirmed against the
@@ -189,6 +202,21 @@ launch time — sources drift:
   have no public API rate.
 - [ ] Verify release dates and Context windows against each Model's source
   URL.
+- [ ] Confirm the Context window recorded for `claude-sonnet-4-6`
+  (1,000,000 tokens — the 1M token context window the announcement
+  describes as in beta, confirmed by the system card; no standard
+  non-beta window size is stated in the fetched sources). This was a
+  judgment call recorded during research — the beta 1M window was
+  recorded rather than an assumed 200K standard window — and the same
+  call applies to `claude-opus-4-6` (1,000,000 tokens, beta 1M window;
+  its announcement states the standard context is 200K): confirm the
+  recorded choice, or record the standard window with a confirming
+  source.
+- [ ] Confirm the Context window recorded for `gemini-2-5-pro`
+  (1,048,576 tokens — the model documentation's input token limit for the
+  stable checkpoint, which is deprecated with auto-routing to
+  gemini-3.8-flash effective 2026-12-01; re-check the page at review
+  time, since deprecation can change what it states).
 - [ ] Confirm the Primary-score resolutions still hold — no newer eligible
   Published Result has appeared (in particular: no Standard Overall row for
   claude-opus-4-6 / claude-sonnet-4-6 on taubench.com, which would outrank

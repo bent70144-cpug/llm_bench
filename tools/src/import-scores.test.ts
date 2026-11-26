@@ -50,10 +50,13 @@ describe("import-scores CLI", () => {
 
   it("imports every valid row and leaves the data directory valid", () => {
     const dir = writeFixture({ "evaluation-settings.json": TWO_SETTING_VOCABULARY });
+    // Both rows are same-rank provider Scores published before the fixture
+    // Primary (2026-01-10): a newer same-ranked Score would have to be the
+    // Primary under the Source resolution rule.
     const csv = writeCsv(dir, "scores.csv", [
       CSV_HEADER,
-      "model-a,bench-1,60,0-shot,provider,https://example.com/model-a,2026-01-11,2026-02-01,true,false",
-      "model-a,bench-1,65,1-shot,provider,https://example.com/model-a,2026-01-12,2026-02-01,true,false",
+      "model-a,bench-1,60,0-shot,provider,https://example.com/model-a,2026-01-06,2026-02-01,true,false",
+      "model-a,bench-1,65,1-shot,provider,https://example.com/model-a,2026-01-05,2026-02-01,true,false",
     ]);
 
     const result = runImport([csv], dir);
@@ -171,9 +174,11 @@ describe("import-scores CLI", () => {
         { name: "CoT, 5-shot", description: "Chain-of-thought with five shots." },
       ],
     });
+    // Published before the fixture Primary (2026-01-10) so the pair stays
+    // valid under the Source resolution rule.
     const csv = writeCsv(dir, "scores.csv", [
       CSV_HEADER,
-      'model-a,bench-1,55,"CoT, 5-shot",provider,https://example.com/model-a,2026-01-13,2026-02-01,true,false',
+      'model-a,bench-1,55,"CoT, 5-shot",provider,https://example.com/model-a,2026-01-05,2026-02-01,true,false',
     ]);
 
     const result = runImport([csv], dir);

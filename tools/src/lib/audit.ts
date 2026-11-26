@@ -1,5 +1,5 @@
 import { DatasetSchema, type Dataset } from "@llm-bench/schema";
-import { readRawDataset, validateDataDir } from "./dataset";
+import { readRawDataset, scoreLocation, validateDataDir } from "./dataset";
 
 /**
  * The pre-launch data audit (ticket 15) — the zero-placeholder pass that
@@ -78,10 +78,6 @@ function modelLocation(model: { id: string }, index: number): string {
 
 function benchmarkLocation(benchmark: { id: string }, index: number): string {
   return `benchmarks.json[${index}] (${benchmark.id})`;
-}
-
-function scoreLocation(score: { modelId: string; benchmarkId: string }, index: number): string {
-  return `scores.json[${index}] (${score.modelId} on ${score.benchmarkId})`;
 }
 
 function vocabularyLocation(entry: { name: string }, index: number): string {

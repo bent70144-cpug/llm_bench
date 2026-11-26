@@ -13,6 +13,7 @@ import {
   blendedPricePer1M,
   computeAverage,
   computeWeightedAverage,
+  datasetDataCurrency,
   decodeLeaderboardUrlState,
   DEFAULT_LEADERBOARD_SORT,
   defaultSelectedBenchmarkIds,
@@ -1401,6 +1402,53 @@ describe("modelDataCurrency", () => {
         expect(modelDataCurrency(model, publishedScores)).toBe("2026-11-26");
       }
       expect(publishedModels).toHaveLength(26);
+    });
+  });
+});
+
+describe("datasetDataCurrency", () => {
+  it("returns the latest of every Model's lastUpdated and every Score's retrievedDate", () => {
+    const datasetModels = [
+      makeModel({ id: "model-a", lastUpdated: "2026-02-01" }),
+      makeModel({ id: "model-b", lastUpdated: "2026-06-15" }),
+    ];
+    const datasetScores = [
+      makeScore({ modelId: "model-a", retrievedDate: "2026-03-10" }),
+      makeScore({ modelId: "model-b", retrievedDate: "2026-05-01" }),
+    ];
+
+    expect(datasetDataCurrency(datasetModels, datasetScores)).toBe("2026-06-15");
+  });
+
+  it("counts every Score — alternate Evaluation settings too", () => {
+    const datasetModels = [makeModel({ id: "model-a", lastUpdated: "2026-02-01" })];
+    const datasetScores = [
+      makeScore({ modelId: "model-a", retrievedDate: "2026-03-01" }),
+      // An alternate Evaluation setting fetched after everything else.
+      makeScore({ modelId: "model-a", retrievedDate: "2026-04-02", isPrimary: false }),
+    ];
+
+    expect(datasetDataCurrency(datasetModels, datasetScores)).toBe("2026-04-02");
+  });
+
+  it("returns the newest retrieval date when it is later than every lastUpdated", () => {
+    const datasetModels = [
+      makeModel({ id: "model-a", lastUpdated: "2026-01-01" }),
+      makeModel({ id: "model-b", lastUpdated: "2026-02-01" }),
+    ];
+    const datasetScores = [
+      makeScore({ modelId: "model-b", retrievedDate: "2026-02-02" }),
+    ];
+
+    expect(datasetDataCurrency(datasetModels, datasetScores)).toBe("2026-02-02");
+  });
+
+  describe("against the real Published Results in @llm-bench/data", () => {
+    it("the site-level data currency is the 2026-11-26 dataset snapshot date", () => {
+      // Every real Score was retrieved 2026-11-26 and every Model's
+      // lastUpdated is 2026-11-26 — the leaderboard footer reads that date,
+      // mirroring each Model page's header.
+      expect(datasetDataCurrency(publishedModels, publishedScores)).toBe("2026-11-26");
     });
   });
 });

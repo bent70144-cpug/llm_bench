@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type CSSProperties } from "react";
+import { useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Model, Score } from "@llm-bench/schema";
 import { pricingConfig } from "@llm-bench/data";
@@ -10,6 +10,7 @@ import {
   type AverageResult,
   type BenchmarkWeights,
 } from "@llm-bench/scoring";
+import { formatOneDecimal, portalTooltipStyle } from "../chart-utils";
 import { Link } from "../router";
 import { modelPath } from "../routes";
 
@@ -75,11 +76,6 @@ function priceOnBasis(model: Model, basis: PriceBasis): number | null {
   if (basis === "input") return model.inputPricePer1M;
   if (basis === "output") return model.outputPricePer1M;
   return blendedPricePer1M(model, pricingConfig);
-}
-
-/** One-decimal display form, trailing zeros dropped (97.0 → "97"). */
-function formatValue(value: number): string {
-  return Number(value.toFixed(1)).toString();
 }
 
 /** A "nice" tick step (1, 2, 2.5, 5 × 10^k) near the requested size. */
@@ -206,7 +202,7 @@ export function PricePerformanceChart({
         ? ""
         : `, rate from ${model.referenceInferenceProvider}`;
     return (
-      `${model.name}: ${aggregateLabel} ${formatValue(aggregate.average ?? 0)}, ` +
+      `${model.name}: ${aggregateLabel} ${formatOneDecimal(aggregate.average ?? 0)}, ` +
       `Coverage ${formatCoverage(aggregate)}, ${basisLabel(basis)} $${price.toFixed(2)}, ` +
       `Provider ${model.provider}${rate}`
     );
@@ -338,7 +334,7 @@ export function PricePerformanceChart({
                   {aggregate.average === null ? (
                     <span className="missing">n/a</span>
                   ) : (
-                    formatValue(aggregate.average)
+                    formatOneDecimal(aggregate.average)
                   )}{" "}
                   {formatCoverage(aggregate)}
                 </li>
@@ -375,14 +371,7 @@ function PointTooltip({
   basis: PriceBasis;
 }) {
   const rect = anchor.getBoundingClientRect();
-  // Flip below the point when there is not enough room above it.
-  const above = rect.top > 240;
-  const style: CSSProperties = {
-    position: "fixed",
-    left: Math.min(Math.max(8, rect.left - 100), Math.max(8, window.innerWidth - 340)),
-    top: above ? rect.top - 8 : rect.bottom + 8,
-    transform: above ? "translateY(-100%)" : undefined,
-  };
+  const style = portalTooltipStyle(rect, 340, -100);
 
   const { model, aggregate, price } = point;
   return createPortal(
@@ -391,7 +380,7 @@ function PointTooltip({
         <strong>{model.name}</strong>
       </p>
       <p>
-        <strong>{aggregateLabel}:</strong> {formatValue(aggregate.average ?? 0)}{" "}
+        <strong>{aggregateLabel}:</strong> {formatOneDecimal(aggregate.average ?? 0)}{" "}
         {formatCoverage(aggregate)}
       </p>
       <p>

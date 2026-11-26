@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fail, loadForMutation, saveIfValid, usageError, DEFAULT_DATA_DIR } from "./lib/cli";
+import {
+  fail,
+  loadForMutation,
+  parseCommonArgs,
+  saveIfValid,
+  usageError,
+} from "./lib/cli";
 
 /**
  * import-scores — bulk-import Scores from a CSV file into the
@@ -57,31 +63,15 @@ const REQUIRED_COLUMNS = [
 
 interface CliArgs {
   dataDir: string;
+  help: boolean;
   csvFile: string | undefined;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
-  const args: CliArgs = { dataDir: DEFAULT_DATA_DIR, csvFile: undefined };
+  const { dataDir, help, rest } = parseCommonArgs(argv, USAGE);
+  const args: CliArgs = { dataDir, help, csvFile: undefined };
 
-  let i = 0;
-  while (i < argv.length) {
-    const arg = argv[i];
-    if (arg === undefined) {
-      break;
-    }
-    if (arg === "--data-dir") {
-      const value = argv[i + 1];
-      if (value === undefined) {
-        usageError("--data-dir requires a path", USAGE);
-      }
-      args.dataDir = path.resolve(value);
-      i += 2;
-      continue;
-    }
-    if (arg === "-h" || arg === "--help") {
-      console.log(USAGE);
-      process.exit(0);
-    }
+  for (const arg of rest) {
     if (arg.startsWith("--")) {
       usageError(`unknown option: ${arg}`, USAGE);
     }
@@ -89,7 +79,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
       usageError(`unexpected extra argument: ${arg}`, USAGE);
     }
     args.csvFile = path.resolve(arg);
-    i += 1;
   }
   return args;
 }
@@ -214,6 +203,10 @@ function scoreTripleKey(score: Record<string, unknown>): string {
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    console.log(USAGE);
+    return;
+  }
   if (args.csvFile === undefined) {
     usageError("missing <csv-file>", USAGE);
   }
