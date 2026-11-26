@@ -240,6 +240,152 @@ describe("validate-data CLI", () => {
     expect(result.output).toContain("urlPattern");
   });
 
+  it("exits non-zero when a pair's Primary score loses the Canonical sources resolution to a higher-ranked Source type", () => {
+    const fixture = validFixture();
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "leaderboard" },
+      { sourceType: "provider" },
+    ];
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // The provider Primary competes with an eligible leaderboard Score that
+    // outranks it — the leaderboard Score must be the Primary, whatever the
+    // values say.
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 60,
+      sourceType: "leaderboard",
+      sourceUrl: "https://board.example.com/rankings",
+      isPrimary: false,
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Canonical sources resolution");
+    expect(result.output).toContain("outranks");
+  });
+
+  it("exits non-zero when a same-ranked competing Score carries the newer publishedDate", () => {
+    const fixture = validFixture();
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // Two provider Scores (same Canonical sources rank); the later-published
+    // one is the alternate, so the Primary loses the newest-publishedDate
+    // tie-break.
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 60,
+      publishedDate: "2026-01-20",
+      isPrimary: false,
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Canonical sources resolution");
+    expect(result.output).toContain("newest publishedDate");
+  });
+
+  it("accepts a lower-valued Primary that wins by Canonical sources rank (resolution by rule, never by value)", () => {
+    const fixture = validFixture();
+    firstBenchmark(fixture).canonicalSources = [
+      { sourceType: "leaderboard" },
+      { sourceType: "provider" },
+    ];
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // The leaderboard Primary (74.4-style) is LOWER than the provider
+    // alternate, but leaderboard outranks provider — the swebench-verified
+    // pattern.
+    firstScore(fixture).sourceType = "leaderboard";
+    firstScore(fixture).sourceUrl = "https://board.example.com/rankings";
+    firstScore(fixture).value = 60;
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 80,
+      sourceType: "provider",
+      sourceUrl: "https://example.com/model-a",
+      isPrimary: false,
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(0);
+  });
+
+  it("accepts a same-rank same-publishedDate tie — the recorded resolution decides (the τ²-bench Retail pattern)", () => {
+    const fixture = validFixture();
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // Two provider Scores from the same source, same rank, same
+    // publishedDate (like the Retail/Telecom domain rows): the documented
+    // rule cannot decide between them, so the recorded Primary stands.
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 99,
+      isPrimary: false,
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(0);
+  });
+
+  it("exits non-zero, without crashing, when an ineligible Primary competes with eligible Scores", () => {
+    const fixture = validFixture();
+    const scores = fixture["scores.json"] as Array<Record<string, unknown>>;
+    // The Primary's Source type is not in the Canonical sources (the
+    // eligibility rule reports it); the pair also holds two eligible Scores,
+    // so the resolution rule must stay silent rather than crash looking for
+    // an eligible Primary that does not exist.
+    firstScore(fixture).sourceType = "third-party";
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "0-shot",
+      value: 60,
+      sourceType: "provider",
+      sourceUrl: "https://example.com/model-a",
+      isPrimary: false,
+    });
+    scores.push({
+      ...firstScore(fixture),
+      evaluationSetting: "1-shot",
+      value: 55,
+      sourceType: "paper",
+      sourceUrl: "https://paper.example.com/bench-1",
+      isPrimary: false,
+    });
+    fixture["evaluation-settings.json"] = [
+      { name: "5-shot", description: "Five-shot prompting." },
+      { name: "0-shot", description: "Zero-shot prompting." },
+      { name: "1-shot", description: "One-shot prompting." },
+    ];
+
+    const result = runValidate(writeFixture(fixture));
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("not in the Canonical sources");
+    expect(result.output).not.toContain("Canonical sources resolution");
+    expect(result.output).not.toContain("TypeError");
+  });
+
   it("accepts a full-featured valid dataset (optional Model fields, third-party rate, urlPatterns, alternate Evaluation settings)", () => {
     const fixture = validFixture();
     const model = firstModel(fixture);

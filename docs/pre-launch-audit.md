@@ -41,6 +41,19 @@ record and cross-record:
 - every Primary score eligible under its Benchmark's Canonical sources: its
   Source type must be listed, and where the entry defines `urlPatterns`, its
   source URL must match at least one pattern;
+- every resolved pair consistent with the Source resolution rule (spec:
+  "the highest-ranked eligible source wins and ties break by newest
+  publishedDate"): for every (Model, Benchmark) pair with more than one
+  eligible Score, no eligible Score may outrank the designated Primary, and
+  no same-ranked eligible Score may be newer. When the top candidates tie
+  on both rank and publishedDate the rule is inconclusive, so those pairs
+  are validation-exempt — the recorded resolution decides. The real dataset
+  holds eight such ties: claude-opus-4-6 and claude-sonnet-4-6 on τ²-bench
+  (resolved by the documented Retail-domain tie-break; see §3's
+  Primary-score resolution item) and six same-card same-date pairs the rule
+  cannot tell apart (deepseek-v4-pro's with/without-thinking rows on four
+  Benchmarks; the gpt-6-2-astra and gpt-6-2-sol reasoning-effort rows on
+  ARC-AGI-2);
 - the Model price invariant (input and output prices both present or both
   null), the Reference inference provider rule (non-null only when a third
   party supplies the rate), `higherIsBetter: true` for all v1 Benchmarks,

@@ -1,6 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DatasetSchema, type Dataset } from "@llm-bench/schema";
+import {
+  DatasetSchema,
+  type Benchmark,
+  type Dataset,
+  type Score,
+} from "@llm-bench/schema";
 
 /**
  * Shared data-package loading, validation, and writing for the LLM Bench
@@ -206,6 +211,39 @@ function scorePairKey(score: ScorePair): string {
   return `${score.modelId} ${score.benchmarkId}`;
 }
 
+/**
+ * The Canonical sources eligibility and rank of one Score under a
+ * Benchmark: the index of its Source type in the ordered Canonical sources
+ * list when eligible (Source type listed and, where the entry defines
+ * urlPatterns, the source URL matching at least one), or -1 when not.
+ * Ineligible Scores never compete for the Primary designation — an
+ * ineligible Primary is reported by the eligibility rule instead. A
+ * urlPattern that is not a valid regular expression counts as non-matching
+ * (the malformed-pattern error is reported separately).
+ */
+function canonicalRank(score: Score, benchmark: Benchmark): number {
+  const rank = benchmark.canonicalSources.findIndex(
+    (entry) => entry.sourceType === score.sourceType,
+  );
+  if (rank === -1) {
+    return -1;
+  }
+  const canonical = benchmark.canonicalSources[rank]!;
+  if (canonical.urlPatterns && canonical.urlPatterns.length > 0) {
+    const matches = canonical.urlPatterns.some((pattern) => {
+      try {
+        return new RegExp(pattern).test(score.sourceUrl);
+      } catch {
+        return false;
+      }
+    });
+    if (!matches) {
+      return -1;
+    }
+  }
+  return rank;
+}
+
 /** Cross-record integrity rules that Zod cannot express within one object. */
 function crossRecordChecks(dataset: Dataset): string[] {
   const errors: string[] = [];
@@ -329,6 +367,68 @@ function crossRecordChecks(dataset: Dataset): string[] {
         );
       }
     }
+  }
+
+  // Source resolution (spec "Source resolution" and story 31): among a
+  // pair's competing eligible Published Results, the highest-ranked
+  // Canonical source wins and ties break by newest publishedDate. For every
+  // pair with more than one eligible Score, the designated Primary must be a
+  // candidate that rule can select: no eligible Score may outrank it, and no
+  // same-ranked eligible Score may be newer. When the top candidates tie on
+  // BOTH rank and publishedDate the documented rule is inconclusive — the
+  // recorded resolution decides, and those pairs are validation-exempt. The
+  // real dataset holds eight such ties: the two tau2-bench pairs
+  // (claude-opus-4-6, claude-sonnet-4-6) resolved by the documented
+  // Retail-domain tie-break (ticket-04 answer, pinned for claude-opus-4-6 in
+  // tools/src/published-results.test.ts), and six same-card same-date pairs
+  // the rule cannot tell apart (deepseek-v4-pro's with/without-thinking rows
+  // on four Benchmarks; the gpt-6-2-astra and gpt-6-2-sol reasoning-effort
+  // rows on arc-agi-2).
+  const eligibleByPair = new Map<
+    string,
+    { pair: ScorePair; ranked: { score: Score; index: number; rank: number }[] }
+  >();
+  for (const [index, score] of dataset.scores.entries()) {
+    const benchmark = benchmarksById.get(score.benchmarkId);
+    if (!benchmark) continue; // already reported as a foreign-key violation
+    const rank = canonicalRank(score, benchmark);
+    if (rank === -1) continue; // never competes for Primary
+    const pair: ScorePair = { modelId: score.modelId, benchmarkId: score.benchmarkId };
+    const entry = eligibleByPair.get(scorePairKey(pair)) ?? { pair, ranked: [] };
+    entry.ranked.push({ score, index, rank });
+    eligibleByPair.set(scorePairKey(pair), entry);
+  }
+
+  for (const { pair, ranked } of eligibleByPair.values()) {
+    if (ranked.length < 2) continue; // no competition to resolve
+    // Only a pair with exactly one Primary is resolvable; the one-Primary
+    // rule above already reports any other count.
+    if (pairs.get(scorePairKey(pair))?.primaries !== 1) continue;
+    // An ineligible Primary never joins the competition — the eligibility
+    // rule above already reports it, so the resolution rule stays silent.
+    const primary = ranked.find(({ score }) => score.isPrimary);
+    if (!primary) continue;
+
+    const bestRank = Math.min(...ranked.map(({ rank }) => rank));
+    if (primary.rank > bestRank) {
+      const winner = ranked.find(({ rank }) => rank === bestRank)!;
+      errors.push(
+        `${scoreLocation(primary.score, primary.index)}: this Primary score loses the Canonical sources resolution for Model "${pair.modelId}" on Benchmark "${pair.benchmarkId}" — Source type "${winner.score.sourceType}" outranks "${primary.score.sourceType}" (the highest-ranked eligible source wins; ties break by newest publishedDate)`,
+      );
+      continue;
+    }
+
+    const topRanked = ranked.filter(({ rank }) => rank === bestRank);
+    const newest = topRanked.reduce((left, right) =>
+      right.score.publishedDate > left.score.publishedDate ? right : left,
+    );
+    if (primary.score.publishedDate < newest.score.publishedDate) {
+      errors.push(
+        `${scoreLocation(primary.score, primary.index)}: this Primary score loses the Canonical sources resolution for Model "${pair.modelId}" on Benchmark "${pair.benchmarkId}" — a same-ranked "${primary.score.sourceType}" Score was published later (${newest.score.publishedDate} vs ${primary.score.publishedDate}; ties break by newest publishedDate)`,
+      );
+    }
+    // Same rank AND same publishedDate among the top candidates: the rule
+    // is inconclusive — the recorded resolution stands (exempt above).
   }
 
   return errors;

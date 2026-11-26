@@ -144,6 +144,9 @@ describe("manage-data CLI", () => {
         ],
       });
 
+      // Same-rank provider Score published before the fixture Primary
+      // (2026-01-10): a newer same-ranked Score would have to be the
+      // Primary under the Source resolution rule.
       const result = runManage(
         [
           "add",
@@ -156,7 +159,7 @@ describe("manage-data CLI", () => {
             evaluationSetting: "0-shot",
             sourceType: "provider",
             sourceUrl: "https://example.com/model-a",
-            publishedDate: "2026-01-11",
+            publishedDate: "2026-01-05",
             retrievedDate: "2026-02-01",
             verified: true,
             isPrimary: false,
@@ -468,6 +471,8 @@ describe("manage-data CLI", () => {
           { name: "0-shot", description: "Zero-shot prompting." },
         ],
       });
+      // Same-rank provider Score published before the fixture Primary
+      // (2026-01-10), so the pair is a valid state before the delete.
       runManage(
         [
           "add",
@@ -480,7 +485,7 @@ describe("manage-data CLI", () => {
             evaluationSetting: "0-shot",
             sourceType: "provider",
             sourceUrl: "https://example.com/model-a",
-            publishedDate: "2026-01-11",
+            publishedDate: "2026-01-05",
             retrievedDate: "2026-02-01",
             verified: true,
             isPrimary: false,
