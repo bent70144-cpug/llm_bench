@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { DatasetSchema, type Dataset, type Score } from "@llm-bench/schema";
+import { DatasetSchema, type Dataset } from "@llm-bench/schema";
 
 /**
  * Shared data-package loading, validation, and writing for the LLM Bench
@@ -173,8 +173,37 @@ function formatSchemaIssue(
   return `${location}: ${issue.message}`;
 }
 
-function scoreLocation(score: Score, index: number): string {
+/**
+ * The location prefix for one Score in validation messages:
+ * `scores.json[<index>] (<modelId> on <benchmarkId>)` — the style every
+ * tool reports Score problems in. Exported because the pre-launch audit
+ * (lib/audit.ts) reports in the same style; takes any record carrying the
+ * pair's ids.
+ */
+export function scoreLocation(
+  score: { modelId: string; benchmarkId: string },
+  index: number,
+): string {
   return `scores.json[${index}] (${score.modelId} on ${score.benchmarkId})`;
+}
+
+/**
+ * A (Model, Benchmark) pair — the unit the exactly-one-Primary rule and the
+ * Source-resolution rule count over. A small typed shape rather than a
+ * space-joined string, so a pair's fields stay typed end to end.
+ */
+interface ScorePair {
+  modelId: string;
+  benchmarkId: string;
+}
+
+/**
+ * The map key of a ScorePair. Ids are kebab-case (no spaces), so the
+ * space-joined key is unambiguous; it exists only here, behind this
+ * function and the ScorePair type.
+ */
+function scorePairKey(score: ScorePair): string {
+  return `${score.modelId} ${score.benchmarkId}`;
 }
 
 /** Cross-record integrity rules that Zod cannot express within one object. */
@@ -233,7 +262,8 @@ function crossRecordChecks(dataset: Dataset): string[] {
   }
 
   const seenTriples = new Set<string>();
-  const primaryCountByPair = new Map<string, number>();
+  /** Every (Model, Benchmark) pair that has Scores, with its Score and Primary counts. */
+  const pairs = new Map<string, { pair: ScorePair; scores: number; primaries: number }>();
 
   for (const [index, score] of dataset.scores.entries()) {
     const triple = `${score.modelId} ${score.benchmarkId} ${score.evaluationSetting}`;
@@ -244,31 +274,28 @@ function crossRecordChecks(dataset: Dataset): string[] {
     }
     seenTriples.add(triple);
 
+    const pair: ScorePair = { modelId: score.modelId, benchmarkId: score.benchmarkId };
+    const entry = pairs.get(scorePairKey(pair)) ?? { pair, scores: 0, primaries: 0 };
+    entry.scores += 1;
     if (score.isPrimary) {
-      const pair = `${score.modelId} ${score.benchmarkId}`;
-      primaryCountByPair.set(pair, (primaryCountByPair.get(pair) ?? 0) + 1);
+      entry.primaries += 1;
     }
+    pairs.set(scorePairKey(pair), entry);
   }
 
-  for (const [pair, primaryCount] of primaryCountByPair) {
-    const [modelId, benchmarkId] = pair.split(" ");
-    if (primaryCount > 1) {
+  for (const { pair, primaries } of pairs.values()) {
+    if (primaries > 1) {
       errors.push(
-        `scores.json: ${primaryCount} Primary scores for Model "${modelId}" on Benchmark "${benchmarkId}" (exactly one required)`,
+        `scores.json: ${primaries} Primary scores for Model "${pair.modelId}" on Benchmark "${pair.benchmarkId}" (exactly one required)`,
       );
     }
   }
 
-  const scoreCountByPair = new Map<string, number>();
-  for (const score of dataset.scores) {
-    const pair = `${score.modelId} ${score.benchmarkId}`;
-    scoreCountByPair.set(pair, (scoreCountByPair.get(pair) ?? 0) + 1);
-  }
-  for (const [pair, scoreCount] of scoreCountByPair) {
-    if (primaryCountByPair.get(pair) === undefined && scoreCount > 0) {
-      const [modelId, benchmarkId] = pair.split(" ");
+  for (const { pair, scores, primaries } of pairs.values()) {
+    // Every entry has at least one Score; one Primary is required.
+    if (primaries === 0) {
       errors.push(
-        `scores.json: Model "${modelId}" has ${scoreCount} Score(s) on Benchmark "${benchmarkId}" but no Primary score (exactly one required)`,
+        `scores.json: Model "${pair.modelId}" has ${scores} Score(s) on Benchmark "${pair.benchmarkId}" but no Primary score (exactly one required)`,
       );
     }
   }
