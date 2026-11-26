@@ -90,3 +90,6 @@ explicit decision — it is not a change to make casually.
   non-commercial constraint (ADR-0004).
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — the consolidated decision
   record.
+- [`docs/pre-launch-audit.md`](docs/pre-launch-audit.md) — the pre-launch
+  data audit: the automated structural checks and zero-placeholder pass, the
+  manual accuracy review, and the data-owner sign-off that gates launch.
