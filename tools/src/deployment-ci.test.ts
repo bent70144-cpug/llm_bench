@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { load as loadYaml } from "js-yaml";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,9 +82,83 @@ function workflowRuns(): string[] {
   return steps.map((step) => step.run ?? "");
 }
 
-function rootPackageJson(): { packageManager?: string; engines?: { node?: string } } {
+function rootPackageJson(): { packageManager?: string; engines?: { node?: string }; scripts?: Record<string, string> } {
   return JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
 }
+
+// --- Lint coverage ----------------------------------------------------------
+
+/**
+ * Every directory under a pnpm-workspace.yaml glob that holds a package.json.
+ * Expanding the globs (instead of listing packages here) means a NEW
+ * workspace package is audited automatically the moment it is added.
+ */
+function workspacePackageDirs(): string[] {
+  const workspace = loadYaml(readFileSync(path.join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8")) as {
+    packages?: string[];
+  };
+  const dirs: string[] = [];
+  for (const glob of workspace.packages ?? []) {
+    if (glob.endsWith("/*")) {
+      const parent = path.join(REPO_ROOT, glob.slice(0, -2));
+      for (const entry of readdirSync(parent)) {
+        if (existsSync(path.join(parent, entry, "package.json"))) {
+          dirs.push(path.relative(REPO_ROOT, path.join(parent, entry)));
+        }
+      }
+    } else if (existsSync(path.join(REPO_ROOT, glob, "package.json"))) {
+      dirs.push(glob);
+    }
+  }
+  return [...new Set(dirs)].sort();
+}
+
+describe("lint coverage (ticket 14)", () => {
+  it("gives every workspace package a lint script", () => {
+    // Story 71: lint in every package, enforced uniformly. The audit
+    // covers every directory the workspace globs resolve to.
+    const dirs = workspacePackageDirs();
+    const expected = ["apps/web", "packages/config", "packages/data", "packages/schema", "packages/scoring", "tools"];
+    expect(dirs, "the workspace globs must resolve to the known packages (and any new ones)").toEqual(
+      expect.arrayContaining(expected),
+    );
+
+    const missing: string[] = [];
+    for (const dir of dirs) {
+      const pkg = JSON.parse(readFileSync(path.join(REPO_ROOT, dir, "package.json"), "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      if (typeof pkg.scripts?.["lint"] !== "string" || pkg.scripts["lint"] === "") {
+        missing.push(dir);
+      }
+    }
+    expect(missing, `packages without a lint script: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("lints every package through the shared ESLint flat config from @llm-bench/config", () => {
+    // No per-package divergent configs: @llm-bench/config owns the one
+    // flat config; every other package re-exports it.
+    for (const dir of workspacePackageDirs()) {
+      const configPath = path.join(REPO_ROOT, dir, "eslint.config.js");
+      expect(existsSync(configPath), `${dir} must have an eslint.config.js`).toBe(true);
+      const config = readFileSync(configPath, "utf8");
+      if (dir === "packages/config") {
+        expect(config, "the config package ships the shared base config").toContain("export const baseConfig");
+      } else {
+        expect(config, `${dir} must apply the shared flat config, not a divergent one`).toContain(
+          '@llm-bench/config/eslint.config.js',
+        );
+      }
+    }
+  });
+
+  it("runs the root lint recursively so one command covers every package", () => {
+    // PRD §8A root scripts: `lint` → `pnpm -r lint`, which visits every
+    // workspace package (the audited lint scripts above).
+    const lint = rootPackageJson().scripts?.["lint"];
+    expect(lint).toBe("pnpm -r lint");
+  });
+});
 
 describe("CI workflow contract (ticket 14)", () => {
   it("parses as YAML with a verify job that gates every merge", () => {
