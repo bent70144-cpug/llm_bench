@@ -1,0 +1,20 @@
+{
+  "name": "llm-bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "LLM Bench compares published language-model benchmark results.",
+  "packageManager": "pnpm@12.23.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "validate": "pnpm --filter tools validate",
+    "data:manage": "pnpm --filter tools manage",
+    "data:import": "pnpm --filter tools run import",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:browser": "pnpm --filter tools run browser-check && pnpm --filter tools run perf-check"
+  }
+}

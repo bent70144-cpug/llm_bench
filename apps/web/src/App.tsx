@@ -1,0 +1,92 @@
+import { useEffect, useRef } from "react";
+import { benchmarks, models } from "@llm-bench/data";
+import { ThemeToggle } from "./ThemeToggle";
+import { useLocation } from "./router";
+import { resolveRoute } from "./routes";
+import { LeaderboardPage } from "./pages/LeaderboardPage";
+import { BenchmarkPage } from "./pages/BenchmarkPage";
+import { ModelPage } from "./pages/ModelPage";
+import { ComparePage } from "./pages/ComparePage";
+import { NotFoundPage } from "./pages/NotFoundPage";
+
+/**
+ * The app shell: resolves the current URL to a route (see routes.ts) and
+ * renders the page. Each page renders exactly one h1 and its own sections;
+ * the shell owns the <main> element so it can move keyboard focus to the
+ * top of the page after client-side navigation, and it keeps the document
+ * title in sync with the rendered page. The site header (with the theme
+ * toggle) sits above <main> on every page.
+ */
+
+/** The document title for the leaderboard (the index.html default). */
+const SITE_TITLE = "LLM Bench";
+
+function App() {
+  const pathname = useLocation();
+  const route = resolveRoute(pathname);
+
+  const benchmark =
+    route.page === "benchmark"
+      ? benchmarks.find((candidate) => candidate.id === route.benchmarkId)
+      : undefined;
+  const model =
+    route.page === "model"
+      ? models.find((candidate) => candidate.id === route.modelId)
+      : undefined;
+
+  const title =
+    route.page === "benchmark"
+      ? (benchmark?.name ?? "Benchmark not found")
+      : route.page === "model"
+        ? (model?.name ?? "Model not found")
+        : route.page === "compare"
+          ? "Compare Models"
+          : route.page === "not-found"
+            ? "Page not found"
+            : SITE_TITLE;
+
+  const mainRef = useRef<HTMLElement | null>(null);
+  const previousPathname = useRef(pathname);
+
+  useEffect(() => {
+    document.title = title === SITE_TITLE ? SITE_TITLE : `${title} — ${SITE_TITLE}`;
+  }, [title]);
+
+  // After a client-side navigation the clicked link is gone, so focus would
+  // fall back to the document body; move it to the page content instead.
+  // The initial load keeps the browser's default focus behaviour.
+  useEffect(() => {
+    if (previousPathname.current === pathname) return;
+    previousPathname.current = pathname;
+    mainRef.current?.focus();
+  }, [pathname]);
+
+  return (
+    <>
+      {/* The first tab stop (ticket 13): keyboard users can jump past the
+          site chrome straight into the page content. Off-screen until
+          focused, so it never disturbs the visual layout. */}
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <header className="site-header">
+        <ThemeToggle />
+      </header>
+      <main id="main-content" ref={mainRef} tabIndex={-1}>
+        {route.page === "leaderboard" ? (
+          <LeaderboardPage />
+        ) : route.page === "benchmark" ? (
+          <BenchmarkPage benchmarkId={route.benchmarkId} />
+        ) : route.page === "model" ? (
+          <ModelPage modelId={route.modelId} />
+        ) : route.page === "compare" ? (
+          <ComparePage />
+        ) : (
+          <NotFoundPage />
+        )}
+      </main>
+    </>
+  );
+}
+
+export default App;

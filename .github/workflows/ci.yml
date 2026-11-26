@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.23.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate data
+        run: pnpm validate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # The browser suite (seam 3) drives the BUILT static site in headless
+      # Chromium: browser-check.ts (rendering, routing, a11y, exports) and
+      # perf-check.ts (page load, 220-Model responsiveness). The workspace
+      # deliberately never depends on Playwright, so it is installed
+      # globally with npm here — the same discovery path the checks use
+      # locally (`npm root -g` in browser-check.ts). PLAYWRIGHT_ENTRY is
+      # exported explicitly: it is the override knob if the entry path ever
+      # differs, and pinning playwright@1.57.0 keeps the CI browser
+      # identical to the local development one.
+      - name: Install Playwright and Chromium for the browser suite
+        run: |
+          npm install -g playwright@1.57.0
+          playwright install --with-deps chromium
+          echo "PLAYWRIGHT_ENTRY=$(npm root -g)/playwright/index.js" >> "$GITHUB_ENV"
+
+      # The perf bounds in perf-check.ts keep their local values (impl-13:
+      # 4-8x headroom over the measured numbers). GitHub-hosted 4-core
+      # Ubuntu runners are comparable to or faster than the development
+      # sandbox the bounds were measured on; the bounds exist to catch
+      # order-of-magnitude regressions, not to benchmark hardware.
+      - name: Browser suite (browser-check + perf-check)
+        run: pnpm test:browser

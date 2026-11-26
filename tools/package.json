@@ -1,0 +1,30 @@
+{
+  "name": "tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "tsx src/validate-data.ts",
+    "manage": "tsx src/manage-data.ts",
+    "import": "tsx src/import-scores.ts",
+    "browser-check": "tsx src/browser-check.ts",
+    "perf-check": "tsx src/perf-check.ts",
+    "lint": "eslint . && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@llm-bench/schema": "workspace:*",
+    "@llm-bench/scoring": "workspace:*",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@llm-bench/config": "workspace:*",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.5",
+    "js-yaml": "^4.3.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.2"
+  }
+}
