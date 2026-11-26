@@ -10,6 +10,7 @@ import { benchmarks, models, scores } from "@llm-bench/data";
 import {
   activeAggregateResult,
   bestValueByBenchmark,
+  datasetDataCurrency,
   decodeLeaderboardUrlState,
   encodeLeaderboardUrlState,
   filterModels,
@@ -667,6 +668,24 @@ export function LeaderboardPage() {
       {/* Exports (ticket 12): the current view (CSV/JSON) and the full raw
           dataset (JSON), generated from the rows and view state above. */}
       <ExportControls rows={rows} viewState={urlState} />
+
+      {/* Data currency and change tracking (stories 77–78): when the data
+          was last updated — computed at read time from the data package by
+          the scoring package, like every Average — and where data changes
+          are recorded: the repository's version history under packages/data,
+          so no separate changelog is maintained. */}
+      <footer className="site-footer">
+        <p className="data-currency">
+          Data last updated {datasetDataCurrency(models, scores)}
+        </p>
+        <p className="table-note">
+          Data changes are tracked in the repository&rsquo;s version history under{" "}
+          <a href="https://github.com/bent70144-cpug/llm_bench/commits/main/packages/data">
+            packages/data
+          </a>
+          ; no separate changelog is maintained.
+        </p>
+      </footer>
 
       {/* Score provenance affordances (ticket 07): one shared tooltip for
           the hovered/focused score cell, and the Score details panel. */}

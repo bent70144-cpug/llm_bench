@@ -387,6 +387,16 @@ a {
   color: light-dark(#64748b, #94a3b8);
 }
 
+/* The leaderboard's site footer: the data-currency line (spec story 77)
+   and the version-history note (story 78). */
+.site-footer {
+  margin-top: 2.5rem;
+}
+
+.site-footer .data-currency {
+  margin: 0;
+}
+
 /* Exports (ticket 12): the three download controls under the table. */
 .export-controls .export-note {
   margin: 0;

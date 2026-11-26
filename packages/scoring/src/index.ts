@@ -245,6 +245,33 @@ export function modelDataCurrency(model: Model, scores: readonly Score[]): strin
 }
 
 /**
+ * The site-level data currency (spec story 77, "when data was last
+ * updated"): the latest of every Model's `lastUpdated` and every Score's
+ * `retrievedDate` (Primary scores and alternate Evaluation settings alike)
+ * — mirroring `modelDataCurrency`'s semantics for the whole dataset, so the
+ * leaderboard footer can tell a visitor how current the data is. Computed
+ * at read time from the data package, never stored. ISO dates compare
+ * lexicographically, so the maximum string is the latest date.
+ */
+export function datasetDataCurrency(
+  models: readonly Model[],
+  scores: readonly Score[],
+): string {
+  let latest = "";
+  for (const model of models) {
+    if (model.lastUpdated > latest) {
+      latest = model.lastUpdated;
+    }
+  }
+  for (const score of scores) {
+    if (score.retrievedDate > latest) {
+      latest = score.retrievedDate;
+    }
+  }
+  return latest;
+}
+
+/**
  * The Blended price of one Model per 1M tokens:
  * (inputWeight × inputPricePer1M + outputWeight × outputPricePer1M) /
  * (inputWeight + outputWeight), with the ratio taken from the pricing

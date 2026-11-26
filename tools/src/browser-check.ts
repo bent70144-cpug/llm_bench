@@ -7,6 +7,7 @@ import {
   bestValueByBenchmark,
   blendedPricePer1M,
   computeAverage,
+  datasetDataCurrency,
   defaultSelectedBenchmarkIds,
   encodeLeaderboardUrlState,
   filterModels,
@@ -757,11 +758,32 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       );
     }
 
-    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    const footer = (await page.locator(".table-note").first().textContent()) ?? "";
     check(
       "the footer states the number of Benchmarks used",
       footer.includes(`Average over ${selection.length} selected Benchmarks`),
       footer.slice(0, 80),
+    );
+
+    // Spec story 77: the site-level data-currency line, computed at read
+    // time from the data package (the scoring package's datasetDataCurrency).
+    const footerText = (await page.locator(".site-footer").textContent()) ?? "";
+    check(
+      "the site footer states when the data was last updated",
+      footerText.includes(`Data last updated ${datasetDataCurrency(models, scores)}`),
+      footerText.slice(0, 80),
+    );
+    // Spec story 78: data changes point at the version history under
+    // packages/data — no separate changelog.
+    check(
+      "the site footer links the repository's version history under packages/data",
+      footerText.includes("version history") &&
+        footerText.includes("no separate changelog") &&
+        (await page
+          .locator(".site-footer a")
+          .getAttribute("href")) ===
+          "https://github.com/bent70144-cpug/llm_bench/commits/main/packages/data",
+      footerText.slice(0, 120),
     );
   });
 
@@ -795,7 +817,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       .locator("input")
       .click();
 
-    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    const footer = (await page.locator(".table-note").first().textContent()) ?? "";
     check(
       "the footer recounts the selected Benchmarks without a reload",
       footer.includes(`Average over ${narrowedSelection.length} selected Benchmarks`),
@@ -1513,7 +1535,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       opusRow.includes("86.8") && opusRow.includes("(4/12)"),
       opusRow.slice(0, 90),
     );
-    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    const footer = (await page.locator(".table-note").first().textContent()) ?? "";
     check(
       "the footer states the Weighted Average and the Benchmark count",
       footer.includes("Weighted Average over 12 selected Benchmarks"),
@@ -1666,7 +1688,7 @@ async function runChecks(page: PageLike, base: string): Promise<void> {
       (await page.locator("tbody tr td.average-cell").first().textContent())?.includes("n/a (0/0)") ===
         true,
     );
-    const footer = (await page.locator(".table-note").textContent()) ?? "";
+    const footer = (await page.locator(".table-note").first().textContent()) ?? "";
     check(
       "the footer counts 0 selected Benchmarks",
       footer.includes("Average over 0 selected Benchmarks"),
