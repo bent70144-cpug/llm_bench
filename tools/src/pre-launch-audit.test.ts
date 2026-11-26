@@ -315,3 +315,41 @@ describe("audit mode rejects placeholder data (synthetic fixtures)", () => {
     expect(audit.status).toBe(1);
   });
 });
+
+describe("the committed audit checklist (docs/pre-launch-audit.md)", () => {
+  it("exists and documents the real commands it points at", () => {
+    const checklist = readFileSync(
+      path.join(REPO_ROOT, "docs/pre-launch-audit.md"),
+      "utf8",
+    );
+
+    // The launch gate must stay wired to the actual CLIs and tests.
+    expect(checklist).toContain("pnpm validate");
+    expect(checklist).toContain("pnpm --filter tools validate --audit");
+    expect(checklist).toContain("pre-launch-audit.test.ts");
+    expect(checklist).toContain("no-analytics.test.ts");
+    expect(checklist).toContain("published-results.test.ts");
+  });
+
+  it("records the ownership chain and the pending, unsigned sign-off", () => {
+    const checklist = readFileSync(
+      path.join(REPO_ROOT, "docs/pre-launch-audit.md"),
+      "utf8",
+    );
+
+    // The sign-off belongs solely to the accountable data owner, whose
+    // identity docs/DECISIONS.md records as deliberately unresolved.
+    expect(checklist).toContain("data owner");
+    expect(checklist).toContain("Deliberately left unresolved");
+    expect(checklist).toContain("CODEOWNERS");
+
+    // Pre-launch state: the sign-off is explicitly pending and unsigned.
+    // When the user supplies the data owner and the sign-off happens, these
+    // assertions are flipped DELIBERATELY as part of that change — updating
+    // this test is part of opening the gate.
+    expect(checklist).toContain("PENDING");
+    expect(checklist).toContain("*(pending — to be supplied by the user)*");
+    expect(checklist).toContain("*(unsigned)*");
+    expect(checklist).toContain("*(none)*");
+  });
+});
