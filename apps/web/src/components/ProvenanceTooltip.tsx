@@ -1,6 +1,7 @@
 import { type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { Score } from "@llm-bench/schema";
+import { portalTooltipStyle } from "../chart-utils";
 import { verifiedStatusLine } from "../provenance";
 
 /**
@@ -24,14 +25,7 @@ interface ProvenanceTooltipProps {
 
 export function ProvenanceTooltip({ id, anchor, score }: ProvenanceTooltipProps) {
   const rect = anchor.getBoundingClientRect();
-  // Flip below the cell when there is not enough room above it.
-  const above = rect.top > 240;
-  const style: CSSProperties = {
-    position: "fixed",
-    left: Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - 360)),
-    top: above ? rect.top - 8 : rect.bottom + 8,
-    transform: above ? "translateY(-100%)" : undefined,
-  };
+  const style: CSSProperties = portalTooltipStyle(rect, 360);
 
   return createPortal(
     <div id={id} role="tooltip" className="score-tooltip" style={style}>

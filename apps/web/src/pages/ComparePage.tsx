@@ -14,6 +14,7 @@ import {
 import { BackLink } from "../BackLink";
 import { Link } from "../router";
 import { benchmarkPath, modelPath } from "../routes";
+import { formatOneDecimal } from "../chart-utils";
 import { GroupedBarChart, RadarChart } from "../components/GroupedBarChart";
 
 /**
@@ -37,10 +38,6 @@ const NO_PUBLIC_RATE = "self-hosted / no public API rate";
 /** The smallest and largest number of Models a comparison shows. */
 const MIN_COMPARED = 2;
 const MAX_COMPARED = 4;
-
-function formatAverage(value: number): string {
-  return Number(value.toFixed(1)).toString();
-}
 
 export function ComparePage() {
   // The view is read-only URL state, decoded once per mount: while the
@@ -201,7 +198,7 @@ export function ComparePage() {
                           {result.average === null ? (
                             <span className="missing">n/a</span>
                           ) : (
-                            formatAverage(result.average)
+                            formatOneDecimal(result.average)
                           )}{" "}
                           <span className="coverage-count">{formatCoverage(result)}</span>
                         </td>

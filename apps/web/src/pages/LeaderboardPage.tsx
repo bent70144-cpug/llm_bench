@@ -28,6 +28,7 @@ import {
 } from "@llm-bench/scoring";
 import { Link } from "../router";
 import { benchmarkPath, COMPARE_PATH, modelPath } from "../routes";
+import { formatOneDecimal } from "../chart-utils";
 import { ExportControls } from "../components/ExportControls";
 import { PricePerformanceChart } from "../components/PricePerformanceChart";
 import { ProvenanceTooltip } from "../components/ProvenanceTooltip";
@@ -79,10 +80,6 @@ const MODEL_COLUMNS: readonly ModelColumn[] = [
   { id: "average", label: "Average", align: "right" },
   { id: "coverage", label: "Coverage", align: "right" },
 ];
-
-function formatAverage(value: number): string {
-  return Number(value.toFixed(1)).toString();
-}
 
 function toggleIn<T>(values: readonly T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
@@ -574,7 +571,7 @@ export function LeaderboardPage() {
                       {average === null ? (
                         <span className="missing">n/a</span>
                       ) : (
-                        formatAverage(average)
+                        formatOneDecimal(average)
                       )}{" "}
                       <span className="coverage-count">
                         {formatCoverage({ average, coverage, selected })}
