@@ -949,14 +949,16 @@ export function buildViewExport(input: ViewExportInput): ViewExport {
   const { rows, benchmarks, scores, state, exportedAt } = input;
   const columns = selectedBenchmarks(benchmarks, state.benchmarkIds);
   const weighted = weightsAreActive(state.weights, state.benchmarkIds);
+  // The same active-aggregate API the leaderboard and ranking use, so the
+  // export's number always agrees with the displayed one.
+  const context: LeaderboardContext = {
+    scores,
+    benchmarkIds: state.benchmarkIds,
+    weights: state.weights,
+  };
 
   const viewRows: ViewExportRow[] = rows.map((model) => {
-    const result = weighted
-      ? computeWeightedAverage(model.id, scores, {
-          benchmarkIds: state.benchmarkIds,
-          weights: state.weights,
-        })
-      : computeAverage(model.id, scores, { benchmarkIds: state.benchmarkIds });
+    const result = activeAggregateResult(model.id, context);
 
     const exportedScores: Record<string, ExportedScore | null> = {};
     for (const benchmark of columns) {

@@ -8,9 +8,8 @@ import {
 } from "@llm-bench/schema";
 import { benchmarks, models, scores } from "@llm-bench/data";
 import {
+  activeAggregateResult,
   bestValueByBenchmark,
-  computeAverage,
-  computeWeightedAverage,
   decodeLeaderboardUrlState,
   encodeLeaderboardUrlState,
   filterModels,
@@ -20,7 +19,6 @@ import {
   selectedBenchmarks,
   sortModelsByColumn,
   weightsAreActive,
-  type AverageResult,
   type BenchmarkWeights,
   type LeaderboardSort,
   type LeaderboardUrlState,
@@ -268,16 +266,6 @@ export function LeaderboardPage() {
     () => sortModelsByColumn(filteredModels, sort, leaderboardContext),
     [filteredModels, sort, leaderboardContext],
   );
-
-  // The active aggregate of one Model: the Weighted Average when weights
-  // are active on the selection, the plain Average otherwise.
-  const aggregateFor = (modelId: string): AverageResult =>
-    weightsAreActive(weights, selectedBenchmarkIds)
-      ? computeWeightedAverage(modelId, scores, {
-          benchmarkIds: selectedBenchmarkIds,
-          weights,
-        })
-      : computeAverage(modelId, scores, { benchmarkIds: selectedBenchmarkIds });
 
   // The whole view is URL state: every change is written back with
   // replaceState (no history spam), so the URL is always a shareable link
@@ -537,7 +525,10 @@ export function LeaderboardPage() {
               </tr>
             ) : (
               rows.map((model) => {
-                const { average, coverage, selected } = aggregateFor(model.id);
+                const { average, coverage, selected } = activeAggregateResult(
+                  model.id,
+                  leaderboardContext,
+                );
                 return (
                   <tr key={model.id}>
                     {/* The per-row Compare checkbox (ticket 10): keyboard
