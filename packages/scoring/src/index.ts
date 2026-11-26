@@ -5,6 +5,7 @@ import {
   type Model,
   type PricingConfig,
   type Score,
+  type SourceType,
 } from "@llm-bench/schema";
 
 /**
@@ -841,4 +842,332 @@ export function decodeLeaderboardUrlState(
     maxOutputPricePer1M: decodeNonNegativeNumber(params.get("max-output-price")),
     comparedModelIds: splitList(params.get("compare") ?? ""),
   };
+}
+
+// --- View and full-dataset exports ------------------------------------------
+
+/**
+ * Everything the default view export needs: the data package plus the view
+ * being exported. The rows arrive already filtered and sorted by the
+ * leaderboard — the export is a faithful snapshot of that exact view, so it
+ * can never diverge from what the visitor sees at click time.
+ */
+export interface ViewExportInput {
+  /** The current filtered, sorted rows, in display order. */
+  rows: readonly Model[];
+  /** The Benchmark catalogue; the export's Benchmark columns follow it. */
+  benchmarks: readonly Benchmark[];
+  /** All Scores; Primary scores feed the exported values and provenance. */
+  scores: readonly Score[];
+  /** The active view state: selection, weights, sort, and filters. */
+  state: LeaderboardUrlState;
+  /** ISO 8601 timestamp recorded in the export. */
+  exportedAt: string;
+}
+
+/** A Primary score with its full provenance, as exported for one pair. */
+export interface ExportedScore {
+  value: number;
+  evaluationSetting: string;
+  sourceType: SourceType;
+  sourceUrl: string;
+  publishedDate: string;
+  retrievedDate: string;
+  verified: boolean;
+  isPrimary: true;
+}
+
+/** One exported row: the Model's fields, the active aggregate, its Coverage, and its Primary scores. */
+export interface ViewExportRow {
+  model: {
+    id: string;
+    name: string;
+    provider: string;
+    license: License;
+    licenseName: string | null;
+    releaseDate: string;
+    contextWindow: number;
+    inputPricePer1M: number | null;
+    outputPricePer1M: number | null;
+    referenceInferenceProvider: string | null;
+  };
+  /**
+   * The active aggregate — the Average, or the Weighted Average when weights
+   * are active on the selection — rounded to 6 decimal places (enough to
+   * strip IEEE-754 noise, far more than any real precision). Null when the
+   * Model's Coverage is 0, never zero.
+   */
+  average: number | null;
+  /** Coverage against the active selection, as (covered/selected). */
+  coverage: { covered: number; selected: number };
+  /**
+   * One entry per selected Benchmark (in catalogue order): its Primary score
+   * with provenance, or null when the Model has no Primary score for it.
+   */
+  scores: Readonly<Record<string, ExportedScore | null>>;
+}
+
+/** The self-describing metadata block of a view export. */
+export interface ViewExportMetadata {
+  kind: "llm-bench-view";
+  formatVersion: 1;
+  exportedAt: string;
+  /** Which aggregate the `average` field holds, per the active weights. */
+  aggregate: "Average" | "Weighted Average";
+  /** The selected Benchmarks, in catalogue (column) order. */
+  selectedBenchmarks: readonly { id: string; name: string }[];
+  /** The canonical per-Benchmark weights, as carried in the shared URL. */
+  weights: BenchmarkWeights;
+  sort: LeaderboardSort;
+  filters: {
+    search: string;
+    licenses: readonly License[];
+    providers: readonly string[];
+    minContextWindow: number | null;
+    maxInputPricePer1M: number | null;
+    maxOutputPricePer1M: number | null;
+  };
+  rowCount: number;
+}
+
+/** The default export: the current view as structured JSON. */
+export interface ViewExport {
+  metadata: ViewExportMetadata;
+  rows: ViewExportRow[];
+}
+
+/**
+ * Builds the default view export: the current filtered, sorted rows with the
+ * selected Benchmark columns (Primary scores only, with full provenance), the
+ * active aggregate (Average, or Weighted Average when weights are active on
+ * the selection), Coverage, and a metadata block recording the selection,
+ * weights, sort, filters, and export timestamp — so the file is
+ * self-describing. Pure: nothing is recomputed from the filters; the rows are
+ * exported exactly as passed in.
+ */
+export function buildViewExport(input: ViewExportInput): ViewExport {
+  const { rows, benchmarks, scores, state, exportedAt } = input;
+  const columns = selectedBenchmarks(benchmarks, state.benchmarkIds);
+  const weighted = weightsAreActive(state.weights, state.benchmarkIds);
+
+  const viewRows: ViewExportRow[] = rows.map((model) => {
+    const result = weighted
+      ? computeWeightedAverage(model.id, scores, {
+          benchmarkIds: state.benchmarkIds,
+          weights: state.weights,
+        })
+      : computeAverage(model.id, scores, { benchmarkIds: state.benchmarkIds });
+
+    const exportedScores: Record<string, ExportedScore | null> = {};
+    for (const benchmark of columns) {
+      const score = primaryScoreFor(model.id, benchmark.id, scores);
+      exportedScores[benchmark.id] =
+        score === undefined
+          ? null
+          : {
+              value: score.value,
+              evaluationSetting: score.evaluationSetting,
+              sourceType: score.sourceType,
+              sourceUrl: score.sourceUrl,
+              publishedDate: score.publishedDate,
+              retrievedDate: score.retrievedDate,
+              verified: score.verified,
+              isPrimary: true,
+            };
+    }
+
+    return {
+      model: {
+        id: model.id,
+        name: model.name,
+        provider: model.provider,
+        license: model.license,
+        licenseName: model.licenseName ?? null,
+        releaseDate: model.releaseDate,
+        contextWindow: model.contextWindow,
+        inputPricePer1M: model.inputPricePer1M,
+        outputPricePer1M: model.outputPricePer1M,
+        referenceInferenceProvider: model.referenceInferenceProvider,
+      },
+      average: result.average === null ? null : Number(result.average.toFixed(6)),
+      coverage: { covered: result.coverage, selected: result.selected },
+      scores: exportedScores,
+    };
+  });
+
+  return {
+    metadata: {
+      kind: "llm-bench-view",
+      formatVersion: 1,
+      exportedAt,
+      aggregate: weighted ? "Weighted Average" : "Average",
+      selectedBenchmarks: columns.map((benchmark) => ({
+        id: benchmark.id,
+        name: benchmark.name,
+      })),
+      weights: state.weights,
+      sort: state.sort,
+      filters: {
+        search: state.search,
+        licenses: state.licenses,
+        providers: state.providers,
+        minContextWindow: state.minContextWindow ?? null,
+        maxInputPricePer1M: state.maxInputPricePer1M ?? null,
+        maxOutputPricePer1M: state.maxOutputPricePer1M ?? null,
+      },
+      rowCount: rows.length,
+    },
+    rows: viewRows,
+  };
+}
+
+/**
+ * The CSV form of one value: missing values are "n/a", never empty or zero,
+ * and any field containing a comma, a double quote, or a line break is
+ * wrapped in double quotes with embedded quotes doubled — RFC 4180.
+ */
+function csvCell(value: string | number | null): string {
+  if (value === null) return "n/a";
+  const text = String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  return text;
+}
+
+/**
+ * Serializes a view export as RFC 4180 CSV: one header row, one row per
+ * exported Model in view order, CRLF record separators, and a final line
+ * break. Columns: the Model fields, the active aggregate (labelled "Average"
+ * or "Weighted Average" per the metadata), Coverage as (n/selected), then —
+ * per selected Benchmark, in catalogue order — the Primary score followed by
+ * its provenance companion columns `<Benchmark name> Source type`,
+ * `<Benchmark name> source URL`, `<Benchmark name> publishedDate`, and
+ * `<Benchmark name> retrievedDate`. Missing values are "n/a".
+ */
+export function viewExportToCsv(view: ViewExport): string {
+  const columns = view.metadata.selectedBenchmarks;
+  const header = [
+    "Model id",
+    "Model name",
+    "Provider",
+    "License",
+    "License name",
+    "Context window",
+    "Release date",
+    "Input price / 1M",
+    "Output price / 1M",
+    "Reference inference provider",
+    view.metadata.aggregate,
+    "Coverage",
+    ...columns.flatMap((benchmark) => [
+      benchmark.name,
+      `${benchmark.name} Source type`,
+      `${benchmark.name} source URL`,
+      `${benchmark.name} publishedDate`,
+      `${benchmark.name} retrievedDate`,
+    ]),
+  ];
+
+  const lines = [header.map(csvCell).join(",")];
+  for (const row of view.rows) {
+    const cells = [
+      row.model.id,
+      row.model.name,
+      row.model.provider,
+      row.model.license,
+      row.model.licenseName,
+      row.model.contextWindow,
+      row.model.releaseDate,
+      row.model.inputPricePer1M,
+      row.model.outputPricePer1M,
+      row.model.referenceInferenceProvider,
+      row.average,
+      formatCoverage({
+        average: row.average,
+        coverage: row.coverage.covered,
+        selected: row.coverage.selected,
+      }),
+      ...columns.flatMap((benchmark) => {
+        const score = row.scores[benchmark.id] ?? null;
+        return score === null
+          ? [null, null, null, null, null]
+          : [
+              score.value,
+              score.sourceType,
+              score.sourceUrl,
+              score.publishedDate,
+              score.retrievedDate,
+            ];
+      }),
+    ];
+    lines.push(cells.map(csvCell).join(","));
+  }
+
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+/** Everything the full-dataset export needs: the raw data package plus a timestamp. */
+export interface FullDatasetExportInput {
+  models: readonly Model[];
+  benchmarks: readonly Benchmark[];
+  /** All Scores, including non-Primary alternate Evaluation settings. */
+  scores: readonly Score[];
+  /** ISO 8601 timestamp recorded in the export. */
+  exportedAt: string;
+}
+
+/** The full raw dataset as one self-describing JSON document. */
+export interface FullDatasetExport {
+  kind: "llm-bench-dataset";
+  formatVersion: 1;
+  exportedAt: string;
+  /** The raw models.json content, verbatim and in data-package order. */
+  models: readonly Model[];
+  /** The raw benchmarks.json content, verbatim and in data-package order. */
+  benchmarks: readonly Benchmark[];
+  /**
+   * The raw scores.json content, verbatim and in data-package order: every
+   * Score, including the non-Primary Scores recorded under alternate
+   * Evaluation settings.
+   */
+  scores: readonly Score[];
+}
+
+/**
+ * Builds the full-dataset export: the raw Models, Benchmarks, and ALL Scores
+ * — including non-Primary alternate Evaluation settings — as one JSON
+ * document, independent of any view state, so alternate settings can be
+ * audited outside the app.
+ */
+export function buildFullDatasetExport(input: FullDatasetExportInput): FullDatasetExport {
+  return {
+    kind: "llm-bench-dataset",
+    formatVersion: 1,
+    exportedAt: input.exportedAt,
+    models: input.models,
+    benchmarks: input.benchmarks,
+    scores: input.scores,
+  };
+}
+
+/** Which export a download filename is built for. */
+export type ExportKind = "view-csv" | "view-json" | "dataset-json";
+
+/**
+ * The download filename of an export: `llm-bench-view-2026-11-26.csv`,
+ * `llm-bench-view-2026-11-26.json`, or `llm-bench-dataset-2026-11-26.json`.
+ * The date is the `exportedAt` timestamp's ISO date part, so a saved file
+ * identifies the day it was taken. Expects an ISO 8601 `exportedAt`.
+ */
+export function exportFilename(kind: ExportKind, exportedAt: string): string {
+  const date = exportedAt.slice(0, 10);
+  switch (kind) {
+    case "view-csv":
+      return `llm-bench-view-${date}.csv`;
+    case "view-json":
+      return `llm-bench-view-${date}.json`;
+    case "dataset-json":
+      return `llm-bench-dataset-${date}.json`;
+  }
 }
