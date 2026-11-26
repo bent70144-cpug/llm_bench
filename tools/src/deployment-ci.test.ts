@@ -160,6 +160,53 @@ describe("lint coverage (ticket 14)", () => {
   });
 });
 
+// --- README -------------------------------------------------------------------
+
+function readReadme(): string {
+  return readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+}
+
+describe("README (ticket 14)", () => {
+  it("introduces the project in glossary vocabulary and points at the glossary and ADRs", () => {
+    const readme = readReadme();
+    // Glossary vocabulary (GLOSSARY.md governs user-visible wording).
+    expect(readme).toContain("Published Results");
+    expect(readme).toContain("Average");
+    expect(readme).toContain("Benchmark");
+    expect(readme).toContain("Model");
+    // A future maintainer must find the recorded decisions (story 86).
+    expect(readme).toContain("GLOSSARY.md");
+    expect(readme).toContain("docs/adr");
+  });
+
+  it("records the non-commercial Vercel Hobby hosting constraint", () => {
+    // ADR-0004: the free hosting terms are a constraint invisible in the
+    // code — the README states it so it is not contradicted by accident.
+    const readme = readReadme();
+    expect(readme).toContain("non-commercial");
+    expect(readme).toContain("Vercel Hobby");
+    expect(readme).toContain("no analytics");
+    expect(readme).toContain("no server functions");
+  });
+
+  it("documents the development commands and the CI gates", () => {
+    const readme = readReadme();
+    expect(readme).toContain("pnpm install --frozen-lockfile");
+    for (const command of [
+      "pnpm dev",
+      "pnpm validate",
+      "pnpm lint",
+      "pnpm test",
+      "pnpm build",
+      "pnpm test:browser",
+      "pnpm data:manage",
+      "pnpm data:import",
+    ]) {
+      expect(readme, `README must document ${command}`).toContain(command);
+    }
+  });
+});
+
 describe("CI workflow contract (ticket 14)", () => {
   it("parses as YAML with a verify job that gates every merge", () => {
     // The parse itself is the contract: a malformed workflow file (bad
